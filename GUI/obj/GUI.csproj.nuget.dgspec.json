@@ -1,20 +1,20 @@
 {
   "format": 1,
   "restore": {
-    "/Users/georgehigbie/Downloads/Snake_Handout/GUI/GUI.csproj": {}
+    "/Users/alexwaldmann/PS9/GUI/GUI.csproj": {}
   },
   "projects": {
-    "/Users/georgehigbie/Downloads/Snake_Handout/GUI/GUI.csproj": {
+    "/Users/alexwaldmann/PS9/GUI/GUI.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "/Users/georgehigbie/Downloads/Snake_Handout/GUI/GUI.csproj",
+        "projectUniqueName": "/Users/alexwaldmann/PS9/GUI/GUI.csproj",
         "projectName": "GUI",
-        "projectPath": "/Users/georgehigbie/Downloads/Snake_Handout/GUI/GUI.csproj",
-        "packagesPath": "/Users/georgehigbie/.nuget/packages/",
-        "outputPath": "/Users/georgehigbie/Downloads/Snake_Handout/GUI/obj/",
+        "projectPath": "/Users/alexwaldmann/PS9/GUI/GUI.csproj",
+        "packagesPath": "/Users/alexwaldmann/.nuget/packages/",
+        "outputPath": "/Users/alexwaldmann/PS9/GUI/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
-          "/Users/georgehigbie/.nuget/NuGet/NuGet.Config"
+          "/Users/alexwaldmann/.nuget/NuGet/NuGet.Config"
         ],
         "originalTargetFrameworks": [
           "net10.0"
@@ -51,7 +51,7 @@
             "Microsoft.AspNetCore.App.Internal.Assets": {
               "suppressParent": "All",
               "target": "Package",
-              "version": "[10.0.2, )",
+              "version": "[10.0.1, )",
               "autoReferenced": true
             }
           },
@@ -74,7 +74,7 @@
               "privateAssets": "all"
             }
           },
-          "runtimeIdentifierGraphPath": "/Users/georgehigbie/.dotnet/sdk/10.0.102/PortableRuntimeIdentifierGraph.json",
+          "runtimeIdentifierGraphPath": "/usr/local/share/dotnet/sdk/10.0.101/PortableRuntimeIdentifierGraph.json",
           "packagesToPrune": {
             "Microsoft.AspNetCore": "(,10.0.32767]",
             "Microsoft.AspNetCore.Antiforgery": "(,10.0.32767]",

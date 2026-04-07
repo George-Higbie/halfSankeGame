@@ -23,7 +23,7 @@
           "buildMultiTargeting/Blazor.Extensions.Canvas.props": {}
         }
       },
-      "Microsoft.AspNetCore.App.Internal.Assets/10.0.2": {
+      "Microsoft.AspNetCore.App.Internal.Assets/10.0.1": {
         "type": "package",
         "build": {
           "build/Microsoft.AspNetCore.App.Internal.Assets.props": {},
@@ -55,10 +55,10 @@
         "staticwebassets/blazor.extensions.canvas.js"
       ]
     },
-    "Microsoft.AspNetCore.App.Internal.Assets/10.0.2": {
-      "sha512": "fMAqrUm+aspxRAsCJ6Hlgs96XSHwNIr9HBNt7wyBAzQkPlfE7w+0C4NzDoJnso5YZyDI0VcRtEXxG9odt3KiZA==",
+    "Microsoft.AspNetCore.App.Internal.Assets/10.0.1": {
+      "sha512": "rafnWkNfJPA0nCZ5u9bFLiIhCv+aGDWBPJMejuROFMHEpsNhTdv8Cvhv+2jIH+b5485FhndbiwOQJUBMeBa6BQ==",
       "type": "package",
-      "path": "microsoft.aspnetcore.app.internal.assets/10.0.2",
+      "path": "microsoft.aspnetcore.app.internal.assets/10.0.1",
       "files": [
         ".nupkg.metadata",
         ".signature.p7s",
@@ -74,7 +74,7 @@
         "build/Microsoft.AspNetCore.App.Internal.Assets.targets",
         "buildMultiTargeting/Microsoft.AspNetCore.App.Internal.Assets.targets",
         "buildTransitive/Microsoft.AspNetCore.App.Internal.Assets.targets",
-        "microsoft.aspnetcore.app.internal.assets.10.0.2.nupkg.sha512",
+        "microsoft.aspnetcore.app.internal.assets.10.0.1.nupkg.sha512",
         "microsoft.aspnetcore.app.internal.assets.nuspec"
       ]
     }
@@ -82,23 +82,23 @@
   "projectFileDependencyGroups": {
     "net10.0": [
       "Blazor.Extensions.Canvas >= 1.1.1",
-      "Microsoft.AspNetCore.App.Internal.Assets >= 10.0.2"
+      "Microsoft.AspNetCore.App.Internal.Assets >= 10.0.1"
     ]
   },
   "packageFolders": {
-    "/Users/georgehigbie/.nuget/packages/": {}
+    "/Users/alexwaldmann/.nuget/packages/": {}
   },
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "/Users/georgehigbie/Downloads/Snake_Handout/GUI/GUI.csproj",
+      "projectUniqueName": "/Users/alexwaldmann/PS9/GUI/GUI.csproj",
       "projectName": "GUI",
-      "projectPath": "/Users/georgehigbie/Downloads/Snake_Handout/GUI/GUI.csproj",
-      "packagesPath": "/Users/georgehigbie/.nuget/packages/",
-      "outputPath": "/Users/georgehigbie/Downloads/Snake_Handout/GUI/obj/",
+      "projectPath": "/Users/alexwaldmann/PS9/GUI/GUI.csproj",
+      "packagesPath": "/Users/alexwaldmann/.nuget/packages/",
+      "outputPath": "/Users/alexwaldmann/PS9/GUI/obj/",
       "projectStyle": "PackageReference",
       "configFilePaths": [
-        "/Users/georgehigbie/.nuget/NuGet/NuGet.Config"
+        "/Users/alexwaldmann/.nuget/NuGet/NuGet.Config"
       ],
       "originalTargetFrameworks": [
         "net10.0"
@@ -135,7 +135,7 @@
           "Microsoft.AspNetCore.App.Internal.Assets": {
             "suppressParent": "All",
             "target": "Package",
-            "version": "[10.0.2, )",
+            "version": "[10.0.1, )",
             "autoReferenced": true
           }
         },
@@ -158,7 +158,7 @@
             "privateAssets": "all"
           }
         },
-        "runtimeIdentifierGraphPath": "/Users/georgehigbie/.dotnet/sdk/10.0.102/PortableRuntimeIdentifierGraph.json",
+        "runtimeIdentifierGraphPath": "/usr/local/share/dotnet/sdk/10.0.101/PortableRuntimeIdentifierGraph.json",
         "packagesToPrune": {
           "Microsoft.AspNetCore": "(,10.0.32767]",
           "Microsoft.AspNetCore.Antiforgery": "(,10.0.32767]",
