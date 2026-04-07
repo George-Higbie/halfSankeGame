@@ -1,0 +1,360 @@
+@page "/snake"
+@rendermode InteractiveServer
+@using Blazor.Extensions
+@using Blazor.Extensions.Canvas
+@using Blazor.Extensions.Canvas.Canvas2D
+@using System.Diagnostics
+    @using GUI.Components.Controllers
+@using GUI.Components.Models
+@using System.Linq
+@inject IJSRuntime JsRuntime;
+@inject GameController GameController
+@inject GUI.Components.Controllers.NetworkController NetworkController
+
+<PageTitle> Snake </PageTitle>
+
+<div style="position: fixed; left: 8px; top: 8px; z-index: 10; background: rgba(255,255,255,0.9); padding:8px; border-radius:6px;">
+    <label>Host: <input @bind="Host" /></label>
+    <label>Port: <input type="number" @bind="Port" style="width:80px" /></label>
+    <label>Name: <input @bind="PlayerName" /></label>
+    <button @onclick="Connect">Connect</button>
+    <button @onclick="Reconnect">Reconnect</button>
+        <div>Status: @_status</div>
+        @if (_reconnectInProgress)
+        {
+            <div>Retrying... @_reconnectCountdown s</div>
+            <button @onclick="(() => _reconnectCts?.Cancel())">Cancel</button>
+        }
+
+    <div style="margin-top:8px; max-height:300px; overflow:auto;">
+        <strong>Players</strong>
+        <ul style="list-style:none; padding:0; margin:4px 0;">
+            @foreach (var s in GameController.GetSnakes().OrderByDescending(x => x.score))
+            {
+                <li style="padding:2px; cursor:pointer;" @onclick="(() => { _centerTargetSnakeId = s.snake; })">
+                    @s.name (@s.score)
+                </li>
+            }
+        </ul>
+    </div>
+</div>
+
+<div id="snakeCanvas" style="position: fixed; width: 100%; height: 100%">
+    <BECanvas Width="1000" Height="1000" @ref="_canvasReference"></BECanvas>
+</div>
+
+@code
+{
+    private BECanvasComponent? _canvasReference;
+    private Canvas2DContext? _context;
+    private IJSObjectReference? _jsModule;
+    private CancellationTokenSource? _renderCts;
+
+    // connection UI
+    private string Host { get; set; } = "localhost";
+    private int Port { get; set; } = 11000;
+    private string PlayerName { get; set; } = "Player";
+    private string _status = "disconnected";
+
+
+
+    protected override async Task OnAfterRenderAsync( bool firstRender )
+    {
+        if ( firstRender )
+        {
+            _jsModule = await JsRuntime.InvokeAsync<IJSObjectReference>( "import", "./Components/Pages/SnakeGUI.razor.js" );
+            _context = await _canvasReference.CreateCanvas2DAsync();
+            await JsRuntime.InvokeAsync<object>( "initRenderJS", DotNetObjectReference.Create( this ) );
+
+            // start render loop
+            _renderCts = new CancellationTokenSource();
+            _ = Task.Run(() => RenderLoopAsync(_renderCts.Token));
+
+            // subscribe to game/network events to update UI
+            _onStateUpdatedHandler = () => _ = InvokeAsync(StateHasChanged);
+            GameController.OnStateUpdated += _onStateUpdatedHandler;
+            _onDisconnectedHandler = () => _ = InvokeAsync(() => { _status = "disconnected"; StateHasChanged(); });
+            NetworkController.OnDisconnected += _onDisconnectedHandler;
+        }
+    }
+
+
+
+    [JSInvokable]
+    public void HandleKeyPress( string key )
+    {
+        // map keys to moving commands
+        var cmd = key.ToLowerInvariant() switch
+        {
+            "w" => "up",
+            "a" => "left",
+            "s" => "down",
+            "d" => "right",
+            "arrowup" => "up",
+            "arrowleft" => "left",
+            "arrowdown" => "down",
+            "arrowright" => "right",
+            _ => null
+        };
+
+        if (cmd != null)
+        {
+            _ = GameController.SendMoveAsync(cmd);
+        }
+        Debug.WriteLine("key pressed: " + key + " -> " + cmd);
+    }
+
+    private async Task Connect()
+    {
+        // single-shot connect (no retries)
+        try
+        {
+            _status = "connecting";
+            StateHasChanged();
+            await GameController.ConnectAsync(Host, Port, PlayerName);
+            _status = "connected";
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            _status = "error: " + ex.Message;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ConnectWithRetries(int maxAttempts = 6)
+    {
+        _reconnectCts?.Cancel();
+        _reconnectCts = new CancellationTokenSource();
+        var ct = _reconnectCts.Token;
+        _reconnectInProgress = true;
+        try
+        {
+            for (int attempt = 0; attempt < maxAttempts && !ct.IsCancellationRequested; attempt++)
+            {
+                try
+                {
+                    _status = $"connecting (attempt {attempt + 1})";
+                    StateHasChanged();
+                    await GameController.ConnectAsync(Host, Port, PlayerName);
+                    _status = "connected";
+                    _reconnectInProgress = false;
+                    StateHasChanged();
+                    return;
+                }
+                catch (Exception)
+                {
+                    // compute backoff in ms
+                    var delayMs = Math.Min(8000, 500 * (1 << Math.Min(attempt, 6)));
+                    _reconnectCountdown = (int)Math.Ceiling(delayMs / 1000.0);
+                    for (int s = _reconnectCountdown; s > 0 && !ct.IsCancellationRequested; s--)
+                    {
+                        _status = $"reconnect in {s}s (attempt {attempt + 1})";
+                        StateHasChanged();
+                        await Task.Delay(1000, ct);
+                    }
+                }
+            }
+
+            _status = "reconnect failed";
+            _reconnectInProgress = false;
+            StateHasChanged();
+        }
+        catch (TaskCanceledException)
+        {
+            _status = "reconnect cancelled";
+            _reconnectInProgress = false;
+            StateHasChanged();
+        }
+    }
+
+    private Action? _onStateUpdatedHandler;
+    private Action? _onDisconnectedHandler;
+    private int? _centerTargetSnakeId = null;
+
+    private async Task Reconnect()
+    {
+        // perform reconnect attempts with UI countdown
+        await ConnectWithRetries();
+    }
+
+    public void Dispose()
+    {
+        try { _renderCts?.Cancel(); } catch { }
+        if (_onStateUpdatedHandler != null) GameController.OnStateUpdated -= _onStateUpdatedHandler;
+        if (_onDisconnectedHandler != null) NetworkController.OnDisconnected -= _onDisconnectedHandler;
+    }
+
+    // single Dispose implementation
+
+    private async Task RenderLoopAsync(CancellationToken ct)
+    {
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                try
+                {
+                    await DrawFrame();
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine("DrawFrame error: " + ex.Message);
+                }
+
+                await Task.Delay(16, ct);
+            }
+        }
+        catch (TaskCanceledException) { }
+    }
+
+    private readonly string[] _colors = new[] { "red", "green", "blue", "orange", "purple", "brown", "magenta", "teal" };
+    private readonly Dictionary<int, (double X, double Y)> _smoothHeads = new();
+    private readonly Dictionary<int, List<(double X, double Y)>> _smoothBodies = new();
+    private readonly Dictionary<int, double> _deathAnimations = new();
+
+    // reconnect state
+    private CancellationTokenSource? _reconnectCts;
+    private bool _reconnectInProgress = false;
+    private int _reconnectCountdown = 0;
+
+    private async Task DrawFrame()
+    {
+        if (_context == null) return;
+
+        // clear
+        await _context.SetFillStyleAsync("#e8f5ff");
+        await _context.FillRectAsync(0, 0, 1000, 1000);
+
+        var worldSize = GameController.WorldSize ?? 1000;
+
+        // determine center target: either selected player or self
+        int centerX = 0, centerY = 0;
+        Snake? centerSnake = null;
+        if (_centerTargetSnakeId.HasValue)
+        {
+            centerSnake = GameController.GetSnakes().FirstOrDefault(s => s.snake == _centerTargetSnakeId.Value);
+        }
+        if (centerSnake == null)
+        {
+            centerSnake = GameController.GetPlayerSnake();
+        }
+        if (centerSnake?.body?.Count > 0)
+        {
+            var head = centerSnake.body[centerSnake.body.Count - 1];
+            centerX = head.X;
+            centerY = head.Y;
+        }
+
+        // clip and transform
+        await _context.BeginPathAsync();
+        await _context.RectAsync(0, 0, 1000, 1000);
+        await _context.ClipAsync();
+        await _context.SaveAsync();
+
+        await _context.TranslateAsync(500, 500);
+        await _context.TranslateAsync(-centerX, -centerY);
+
+        // draw walls
+        foreach (var w in GameController.GetWalls())
+        {
+            if (w.p1 == null || w.p2 == null) continue;
+            // draw as a rectangle covering p1->p2 in 50px segments
+            var x = Math.Min(w.p1.X, w.p2.X);
+            var y = Math.Min(w.p1.Y, w.p2.Y);
+            var wdt = Math.Abs(w.p1.X - w.p2.X);
+            var hgt = Math.Abs(w.p1.Y - w.p2.Y);
+            if (wdt == 0) wdt = 50; if (hgt == 0) hgt = 50;
+            await _context.SetFillStyleAsync("#444444");
+            await _context.FillRectAsync(x, y, Math.Max(50, wdt), Math.Max(50, hgt));
+        }
+
+        // draw powerups
+        foreach (var p in GameController.GetPowerups())
+        {
+            if (p.loc == null) continue;
+            await _context.SetFillStyleAsync("gold");
+            await _context.BeginPathAsync();
+            await _context.ArcAsync(p.loc.X, p.loc.Y, 8, 0, Math.PI * 2);
+            await _context.FillAsync();
+        }
+
+            // draw snakes (smoothed body + head, death animation)
+        foreach (var s in GameController.GetSnakes())
+        {
+            if (s.body == null || s.body.Count < 2) continue;
+            var color = _colors[s.snake % _colors.Length];
+
+            // prepare smoothed body positions
+            if (!_smoothBodies.TryGetValue(s.snake, out var smoothList) || smoothList.Count != s.body.Count)
+            {
+                smoothList = s.body.Select(pt => ((double)pt.X, (double)pt.Y)).ToList();
+                _smoothBodies[s.snake] = smoothList;
+            }
+
+            // update smoothing per-vertex
+            for (int i = 0; i < s.body.Count; i++)
+            {
+                var cur = s.body[i];
+                var prev = smoothList[i];
+                var nxv = prev.X + (cur.X - prev.X) * 0.2;
+                var nyv = prev.Y + (cur.Y - prev.Y) * 0.2;
+                smoothList[i] = (nxv, nyv);
+            }
+
+            // draw path using smoothed positions
+            await _context.SetStrokeStyleAsync(color);
+            await _context.SetLineWidthAsync(10);
+            await _context.BeginPathAsync();
+            var sf = smoothList[0];
+            await _context.MoveToAsync(sf.X, sf.Y);
+            for (int i = 1; i < smoothList.Count; i++)
+            {
+                var pt = smoothList[i];
+                await _context.LineToAsync(pt.X, pt.Y);
+            }
+            await _context.StrokeAsync();
+
+            // draw head (smoothed)
+            var headSm = smoothList[smoothList.Count - 1];
+
+            // draw death animation if this snake died on the last received frame
+            if (s.died)
+            {
+                _deathAnimations[s.snake] = 0.0;
+            }
+            if (_deathAnimations.TryGetValue(s.snake, out var prog))
+            {
+                // draw expanding circle
+                var radius = 10 + prog * 60;
+                var alpha = 1.0 - prog;
+                await _context.SetFillStyleAsync($"rgba(255,80,0,{alpha:F2})");
+                await _context.BeginPathAsync();
+                await _context.ArcAsync(headSm.X, headSm.Y, radius, 0, Math.PI * 2);
+                await _context.FillAsync();
+                prog += 0.03; // advance animation
+                if (prog >= 1.0) _deathAnimations.Remove(s.snake);
+                else _deathAnimations[s.snake] = prog;
+            }
+
+            await _context.SetFillStyleAsync("white");
+            await _context.BeginPathAsync();
+            await _context.ArcAsync(headSm.X, headSm.Y, 8, 0, Math.PI * 2);
+            await _context.FillAsync();
+            await _context.SetFillStyleAsync(color);
+            await _context.BeginPathAsync();
+            await _context.ArcAsync(headSm.X, headSm.Y, 6, 0, Math.PI * 2);
+            await _context.FillAsync();
+
+            if (!string.IsNullOrEmpty(s.name))
+            {
+                await _context.SetFillStyleAsync("black");
+                await _context.SetFontAsync("12px sans-serif");
+                await _context.FillTextAsync(s.name + " (" + s.score + ")", headSm.X + 10, headSm.Y - 10);
+            }
+        }
+
+        await _context.RestoreAsync();
+    }
+
+}

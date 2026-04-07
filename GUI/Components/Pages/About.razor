@@ -1,0 +1,28 @@
+﻿@page "/"
+
+<PageTitle>About</PageTitle>
+
+<h1>About this Snake Client (PS9)</h1>
+
+<p>This is the student implementation of the Snake GUI client. It connects to the provided server using the assignment's line-delimited JSON protocol.</p>
+
+<h2>Run instructions (macOS)</h2>
+<pre>
+chmod +x /path/to/Server
+cd /path/to/Server
+./Server
+
+cd /path/to/GUI
+dotnet run
+open http://localhost:5000/snake
+</pre>
+
+<h2>Partners</h2>
+<p>P1: __________</p>
+<p>P2: __________</p>
+
+<h2>Notes</h2>
+<ul>
+	<li>Use the connection box on the top-left to enter host, port, and player name.</li>
+	<li>Controls: WASD or arrow keys. Key presses are sent as JSON lines like {"moving":"left"}.</li>
+</ul>
