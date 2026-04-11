@@ -841,6 +841,7 @@
 
             // Explosion particles
             currentDist = 0;
+            bool headParticleDone = false;
             for (int i = path.Count - 1; i > 0; i--)
             {
                 var segLen = lengths[i - 1];
@@ -856,8 +857,10 @@
                         var bx = path[i].X + (path[i - 1].X - path[i].X) * t;
                         var by = path[i].Y + (path[i - 1].Y - path[i].Y) * t;
                         var bAlpha = Math.Max(0, 1.0 - timeSinceExplosion / ParticleLifespan);
-                        var baseRadius = ptDist < BitDistance ? 10 : 3;
-                        var expandFactor = ptDist < BitDistance ? 25 : 12;
+                        bool isHead = !headParticleDone && ptDist < 1.0;
+                        if (isHead) headParticleDone = true;
+                        var baseRadius = isHead ? 10 : 3;
+                        var expandFactor = isHead ? 25 : 12;
                         var bRadius = baseRadius + timeSinceExplosion / ParticleLifespan * expandFactor;
 
                         await _context.SetGlobalAlphaAsync((float)bAlpha);
