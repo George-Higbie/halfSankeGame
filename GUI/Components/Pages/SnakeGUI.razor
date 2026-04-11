@@ -95,6 +95,72 @@
 
     private bool _showDeathScreen = false;
 
+    private bool _spawnVerified = false;
+
+    private bool IsSpawnSafe(Snake player)
+    {
+        if (player.body == null || player.body.Count < 2 || player.dir == null) return false;
+        var head = player.body.Last();
+        var headX = (double)head.X;
+        var headY = (double)head.Y;
+        var dirX = (double)player.dir.X;
+        var dirY = (double)player.dir.Y;
+        
+        // Ray length 500 units (10 tiles)
+        double rayX1 = headX;
+        double rayY1 = headY;
+        double rayX2 = headX + dirX * 500;
+        double rayY2 = headY + dirY * 500;
+
+        foreach (var w in GameController.GetWalls())
+        {
+            if (w.p1 == null || w.p2 == null) continue;
+            double rx1 = Math.Min(w.p1.X, w.p2.X) - 25;
+            double rx2 = Math.Max(w.p1.X, w.p2.X) + 25;
+            double ry1 = Math.Min(w.p1.Y, w.p2.Y) - 25;
+            double ry2 = Math.Max(w.p1.Y, w.p2.Y) + 25;
+            
+            if (headX >= rx1 && headX <= rx2 && headY >= ry1 && headY <= ry2) return false;
+            if (LineIntersectsRect(rayX1, rayY1, rayX2, rayY2, rx1, ry1, rx2, ry2)) return false;
+        }
+
+        foreach (var s in GameController.GetSnakes())
+        {
+            if (s.snake == player.snake || !s.alive || s.body == null || s.body.Count < 2) continue;
+            for (int i = 0; i < s.body.Count - 1; i++)
+            {
+                var bp1 = s.body[i];
+                var bp2 = s.body[i+1];
+                double rx1 = Math.Min(bp1.X, bp2.X) - 10;
+                double rx2 = Math.Max(bp1.X, bp2.X) + 10;
+                double ry1 = Math.Min(bp1.Y, bp2.Y) - 10;
+                double ry2 = Math.Max(bp1.Y, bp2.Y) + 10;
+                
+                if (headX >= rx1 && headX <= rx2 && headY >= ry1 && headY <= ry2) return false;
+                if (LineIntersectsRect(rayX1, rayY1, rayX2, rayY2, rx1, ry1, rx2, ry2)) return false;
+            }
+        }
+        
+        return true;
+    }
+
+    private bool LineIntersectsRect(double p1x, double p1y, double p2x, double p2y, double rx1, double ry1, double rx2, double ry2)
+    {
+        if (p1x == p2x) // Vertical ray
+        {
+            double minY = Math.Min(p1y, p2y);
+            double maxY = Math.Max(p1y, p2y);
+            return p1x >= rx1 && p1x <= rx2 && minY <= ry2 && maxY >= ry1;
+        }
+        else if (p1y == p2y) // Horizontal ray
+        {
+            double minX = Math.Min(p1x, p2x);
+            double maxX = Math.Max(p1x, p2x);
+            return p1y >= ry1 && p1y <= ry2 && minX <= rx2 && maxX >= rx1;
+        }
+        return false;
+    }
+
     protected override async Task OnAfterRenderAsync( bool firstRender )
     {
         if ( firstRender )
@@ -108,15 +174,34 @@
             _ = Task.Run(() => RenderLoopAsync(_renderCts.Token));
 
             // subscribe to game/network events to update UI
-            _onStateUpdatedHandler = () => _ = InvokeAsync(() => {
+            _onStateUpdatedHandler = () => _ = InvokeAsync(async () => {
                 var player = GameController.GetPlayerSnake();
-                if (player != null && player.died && !_showDeathScreen) {
-                    _showDeathScreen = true;
-                    // Provide a nice freeze frame / explosion animation time before true disconnect
-                    _ = Task.Delay(2000).ContinueWith(_ => InvokeAsync(() => {
-                        GameController.Disconnect();
-                        StateHasChanged();
-                    }));
+                if (player != null)
+                {
+                    if (player.alive)
+                    {
+                        if (_showDeathScreen)
+                        {
+                            _showDeathScreen = false;
+                        }
+                        
+                        if (!_spawnVerified)
+                        {
+                            if (!IsSpawnSafe(player))
+                            {
+                                GameController.Disconnect();
+                                await Reconnect();
+                                return;
+                            }
+                            _spawnVerified = true;
+                        }
+                    }
+                    else if (player.died && !_showDeathScreen)
+                    {
+                        _showDeathScreen = true;
+                        _spawnVerified = false;
+                        // NO disconnect here! Server auto-respawns, or user clicks Respawn manually.
+                    }
                 }
                 StateHasChanged();
             });
@@ -158,6 +243,7 @@
     private void Respawn()
     {
         _showDeathScreen = false;
+        _spawnVerified = false;
         _deathAnimations.Clear();
         _ = Reconnect();
     }

@@ -37,6 +37,8 @@ namespace GUI.Components.Controllers
 
         public async Task ConnectAsync(string host, int port, string playerName, CancellationToken ct = default)
         {
+            PlayerId = null;
+            WorldSize = null;
             _host = host;
             _port = port;
             _playerName = playerName;
