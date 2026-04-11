@@ -168,7 +168,8 @@ public static class DatabaseController
 			list[0].Add("Score");
 			list[0].Add("Accuracy (%)");
 			list[0].Add("Game Duration (s)");
-			((DbCommand)(object)obj).CommandText = "select Games.GameID, Player, Score, Accuracy, Duration from PlayersByGame join Games on Games.GameID = PlayersByGame.GameID where Player = \"" + player + "\";";
+			((DbCommand)(object)obj).CommandText = "select Games.GameID, Player, Score, Accuracy, Duration from PlayersByGame join Games on Games.GameID = PlayersByGame.GameID where Player = @player;";
+			obj.Parameters.AddWithValue("@player", (object)player);
 			Console.WriteLine("getting games for player " + player);
 			MySqlDataReader val2 = obj.ExecuteReader();
 			try
@@ -213,7 +214,8 @@ public static class DatabaseController
 			list[0].Add("Player");
 			list[0].Add("Score");
 			list[0].Add("Accuracy (%)");
-			((DbCommand)(object)obj).CommandText = "select Player, Score, Accuracy from PlayersByGame where GameID = " + id + ";";
+			((DbCommand)(object)obj).CommandText = "select Player, Score, Accuracy from PlayersByGame where GameID = @id;";
+			obj.Parameters.AddWithValue("@id", (object)id);
 			Console.WriteLine("getting game ID " + id);
 			MySqlDataReader val2 = obj.ExecuteReader();
 			try
@@ -284,6 +286,7 @@ public class GameModel
 
 	public GameModel(uint id, uint d)
 	{
+		ID = id;
 		Duration = d;
 		players = new List<PlayerModel>();
 	}

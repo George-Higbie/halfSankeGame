@@ -59,7 +59,7 @@ public class Vector2D
 		Y_f = other.Y_f;
 	}
 
-	public override bool Equals(object? obj)
+	public override bool Equals(object obj)
 	{
 		if (!(obj is Vector2D vector2D))
 		{

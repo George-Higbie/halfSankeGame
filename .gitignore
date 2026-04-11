@@ -3,3 +3,5 @@ Server/obj/
 Server/publish/
 Server/lib/
 Server-osx-arm64/Server.bak
+Server-osx-arm64/publish/
+Server-win-x64/

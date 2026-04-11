@@ -139,14 +139,11 @@ public class Server
 			{
 				lock (world)
 				{
-					if (!world.Snakes.ContainsKey(key))
+					if (world.Snakes.ContainsKey(key))
 					{
-						continue;
+						world.ProcessCommand(world.Snakes[key], array[i]);
 					}
-					world.ProcessCommand(world.Snakes[key], array[i]);
-					goto IL_0094;
 				}
-				IL_0094:
 				state.RemoveData(0, array[i].Length + 1);
 			}
 			Networking.GetData(state);
@@ -220,7 +217,7 @@ public class Server
 							world.Snakes[(int)linkedListNode.Value.ID].Discontinue(world.GetTime());
 						}
 					}
-					LinkedListNode<SocketState>? next = linkedListNode.Next;
+					LinkedListNode<SocketState> next = linkedListNode.Next;
 					connections.Remove(linkedListNode);
 					linkedListNode = next;
 				}

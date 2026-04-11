@@ -694,15 +694,14 @@ public class World
 
 	public Vector2D RandomLocation(float padding)
 	{
-		Vector2D vector2D;
-		bool flag;
-		do
+		const int maxAttempts = 500;
+		for (int attempt = 0; attempt < maxAttempts; attempt++)
 		{
 			float num = (float)rand.NextDouble() * 2f - 1f;
 			float num2 = (float)rand.NextDouble() * 2f - 1f;
-			vector2D = new Vector2D(num, num2);
+			Vector2D vector2D = new Vector2D(num, num2);
 			vector2D *= (double)(Size / 2);
-			flag = true;
+			bool flag = true;
 			foreach (Wall value in Walls.Values)
 			{
 				if (value.Intersects(vector2D, 50f + padding))
@@ -732,14 +731,34 @@ public class World
 					if (!flag) break;
 				}
 			}
+			if (flag) return vector2D;
 		}
-		while (!flag);
-		return vector2D;
+		// Fallback: return a random position ignoring snake proximity
+		Vector2D fallback;
+		do
+		{
+			float fx = (float)rand.NextDouble() * 2f - 1f;
+			float fy = (float)rand.NextDouble() * 2f - 1f;
+			fallback = new Vector2D(fx, fy);
+			fallback *= (double)(Size / 2);
+			bool wallClear = true;
+			foreach (Wall value in Walls.Values)
+			{
+				if (value.Intersects(fallback, 50f + padding))
+				{
+					wallClear = false;
+					break;
+				}
+			}
+			if (wallClear) return fallback;
+		}
+		while (true);
 	}
 
 	private (Vector2D tail, Vector2D head) RandomSnakeSpawn()
 	{
 		const double clearance = 300.0;
+		const double step = 30.0;
 		const int maxAttempts = 200;
 		for (int attempt = 0; attempt < maxAttempts; attempt++)
 		{
@@ -747,19 +766,21 @@ public class World
 			Vector2D h = RandomSnakeDirection(t);
 			Vector2D dir = h - t;
 			dir.Normalize();
-			Vector2D checkPoint = h + dir * clearance;
 
+			// Check the entire corridor from head to clearance distance ahead
 			bool clear = true;
-			foreach (Wall wall in Walls.Values)
+			for (double d = 0; d <= clearance && clear; d += step)
 			{
-				if (wall.Intersects(checkPoint, 50.0))
+				Vector2D checkPoint = h + dir * d;
+				foreach (Wall wall in Walls.Values)
 				{
-					clear = false;
-					break;
+					if (wall.Intersects(checkPoint, 50.0))
+					{
+						clear = false;
+						break;
+					}
 				}
-			}
-			if (clear)
-			{
+				if (!clear) break;
 				foreach (Snake s in Snakes.Values)
 				{
 					if (!s.Alive) continue;

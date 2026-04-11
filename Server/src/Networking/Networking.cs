@@ -338,9 +338,9 @@ namespace CS3500.Networking
 	{
 		private TcpClient _tcpClient = new TcpClient();
 
-		private StreamReader? _reader;
+		private StreamReader _reader;
 
-		private StreamWriter? _writer;
+		private StreamWriter _writer;
 
 		public bool IsConnected => _tcpClient?.Connected ?? false;
 
