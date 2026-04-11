@@ -59,6 +59,9 @@ namespace GUI.Components.Controllers
         public IReadOnlyCollection<Powerup> GetPowerups() =>
             _powerups.Values.ToList().AsReadOnly();
 
+        /// <summary>Fires when the current player dies. Raised once per death event.</summary>
+        public event Action? OnPlayerDied;
+
         /// <summary>Returns a deep copy of the current player's snake, or null.</summary>
         public Snake? GetPlayerSnake()
         {
@@ -95,7 +98,6 @@ namespace GUI.Components.Controllers
             _powerups.Clear();
             _walls.Clear();
             _pendingWalls.Clear();
-
             OnStateUpdated?.Invoke();
         }
 
@@ -154,7 +156,10 @@ namespace GUI.Components.Controllers
             }
             else if (_snakes.TryGetValue(s.Id, out var existing))
             {
+                var wasDead = existing.Died != true;
                 MergeSnakeFields(existing, s);
+                if (existing.Died == true && PlayerId.HasValue && s.Id == PlayerId.Value)
+                    OnPlayerDied?.Invoke();
             }
             else
             {

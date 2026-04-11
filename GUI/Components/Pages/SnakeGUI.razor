@@ -47,8 +47,11 @@
     <div style="margin-top:12px; border-top:1px solid rgba(255,255,255,0.1); padding-top:10px;">
         <label class="toggle"><input type="checkbox" @bind="_highQualityTextures" /> High Quality</label>
         <label class="toggle"><input type="checkbox" @bind="_drawGrid" /> Grid Overlay</label>
+        <label class="toggle"><input type="checkbox" @bind="_showScoreboard" /> Scoreboard</label>
     </div>
 
+    @if (_showScoreboard)
+    {
     <div style="margin-top:12px; border-top:1px solid rgba(255,255,255,0.1); padding-top:10px;">
         <strong style="font-size:0.85rem; text-transform:uppercase; letter-spacing:1px; opacity:0.7;">Scoreboard</strong>
         <ul class="scoreboard">
@@ -61,6 +64,7 @@
             }
         </ul>
     </div>
+    }
 </div>
 
 @* ── Canvas ── *@
@@ -303,10 +307,14 @@
     private bool _showDeathScreen;
     private bool _spawnSafe;
     private bool _rerolling;
+    private CancellationTokenSource? _rerollCts;
     private bool _drawGrid = true;
     private bool _highQualityTextures = true;
     private bool _sidebarOpen = true;
+    private bool _showScoreboard = true;
     private int? _centerTargetSnakeId;
+    private int _frozenCameraX;
+    private int _frozenCameraY;
 
     // ==================== Inner Types ====================
 
@@ -337,12 +345,16 @@
             StateHasChanged();
         });
         NetworkController.OnDisconnected += _onDisconnectedHandler;
+
+        GameController.OnPlayerDied += OnPlayerDied;
     }
 
     public void Dispose()
     {
         try { _renderCts?.Cancel(); } catch { }
+        try { _rerollCts?.Cancel(); } catch { }
         if (_onDisconnectedHandler != null) NetworkController.OnDisconnected -= _onDisconnectedHandler;
+        GameController.OnPlayerDied -= OnPlayerDied;
     }
 
     // ==================== Input ====================
@@ -350,6 +362,8 @@
     [JSInvokable]
     public void HandleKeyPress(string key)
     {
+        if (_showDeathScreen) return;
+
         var cmd = key.ToLowerInvariant() switch
         {
             "w" or "arrowup" => "up",
@@ -365,9 +379,11 @@
 
     private async Task Connect()
     {
+        try { _rerollCts?.Cancel(); } catch { }
         _showDeathScreen = false;
         _spawnSafe = false;
         _rerolling = false;
+        _sidebarOpen = false;
         GameController.Disconnect();
         try
         {
@@ -386,8 +402,32 @@
 
     private async Task Reconnect()
     {
+        try { _rerollCts?.Cancel(); } catch { }
         _showDeathScreen = false;
         _spawnSafe = false;
+        _rerolling = false;
+        await ConnectInternal();
+    }
+
+    private void Respawn()
+    {
+        try { _rerollCts?.Cancel(); } catch { }
+        _showDeathScreen = false;
+        _spawnSafe = false;
+        _rerolling = false;
+        // Server already auto-respawned — just clear the death overlay
+    }
+
+    /// <summary>Reconnects without touching death-screen state. Used by spawn reroll.</summary>
+    private async Task RerollReconnect()
+    {
+        _spawnSafe = false;
+        _rerolling = false;
+        await ConnectInternal();
+    }
+
+    private async Task ConnectInternal()
+    {
         GameController.Disconnect();
         try
         {
@@ -404,27 +444,38 @@
         }
     }
 
-    private void Respawn()
+    // ==================== Game State ====================
+
+    private void OnPlayerDied()
     {
-        _showDeathScreen = false;
+        if (_showDeathScreen) return;
+
+        try { _rerollCts?.Cancel(); } catch { }
+        _showDeathScreen = true;
         _spawnSafe = false;
         _rerolling = false;
-        _ = Reconnect();
-    }
+        _status = "Game Over";
 
-    // ==================== Game State ====================
+        // Freeze camera at the player's death position
+        var player = GameController.GetPlayerSnake();
+        if (player?.Body?.Count > 0)
+        {
+            var head = player.Body[^1];
+            _frozenCameraX = head.X;
+            _frozenCameraY = head.Y;
+        }
+        if (player != null) StartDeathAnimation(player);
+
+        // Don't disconnect — keep the connection alive so the world stays populated.
+        // The server auto-respawns, but we hide the player until they click Respawn.
+
+        _ = InvokeAsync(StateHasChanged);
+    }
 
     private void CheckPlayerState()
     {
         var player = GameController.GetPlayerSnake();
         if (player == null) return;
-
-        if (player.Died == true && !_showDeathScreen)
-        {
-            _showDeathScreen = true;
-            _spawnSafe = false;
-            StartDeathAnimation(player);
-        }
 
         if (player.Alive == true && !_spawnSafe && !_showDeathScreen)
         {
@@ -438,11 +489,34 @@
             else if (!_rerolling)
             {
                 _rerolling = true;
+                try { _rerollCts?.Cancel(); } catch { }
+                _rerollCts = new CancellationTokenSource();
+                var token = _rerollCts.Token;
                 _ = Task.Run(async () =>
                 {
-                    GameController.Disconnect();
-                    await Task.Delay(80);
-                    await InvokeAsync(() => Reconnect());
+                    try
+                    {
+                        await Task.Delay(80, token);
+                        if (token.IsCancellationRequested || _showDeathScreen)
+                        {
+                            _rerolling = false;
+                            return;
+                        }
+
+                        await InvokeAsync(async () =>
+                        {
+                            if (_showDeathScreen)
+                            {
+                                _rerolling = false;
+                                return;
+                            }
+                            await RerollReconnect();
+                        });
+                    }
+                    catch (TaskCanceledException)
+                    {
+                        _rerolling = false;
+                    }
                 });
             }
         }
@@ -595,7 +669,13 @@
         centerSnake ??= GameController.GetPlayerSnake();
 
         int centerX = 0, centerY = 0;
-        if (centerSnake?.Body?.Count > 0)
+        if (_showDeathScreen)
+        {
+            // Keep camera locked where the player died
+            centerX = _frozenCameraX;
+            centerY = _frozenCameraY;
+        }
+        else if (centerSnake?.Body?.Count > 0)
         {
             var head = centerSnake.Body[^1];
             centerX = head.X;
@@ -610,8 +690,10 @@
         await _context.RectAsync(0, 0, _viewW, _viewH);
         await _context.ClipAsync();
         await _context.SaveAsync();
-        await _context.TranslateAsync(_viewW / 2, _viewH / 2);
-        await _context.TranslateAsync(-centerX, -centerY);
+        // Pixel-align camera translation so wall edges don't anti-alias inconsistently.
+        var camX = Math.Round(_viewW / 2.0 - centerX);
+        var camY = Math.Round(_viewH / 2.0 - centerY);
+        await _context.TranslateAsync(camX, camY);
 
         if (_drawGrid && _highQualityTextures)
             await DrawGrid(worldSize);
@@ -743,53 +825,99 @@
 
     private async Task DrawWalls()
     {
-        await _context!.SetFillStyleAsync(_highQualityTextures ? "#2a2c2f" : "#222222");
-        foreach (var w in GameController.GetWalls())
+        var ctx = _context;
+        if (ctx == null) return;
+
+        var walls = GameController.GetWalls();
+        const int bs = BrickSize;
+
+        if (!_highQualityTextures)
         {
-            if (w.Point1 == null || w.Point2 == null) continue;
-            var (x, y, wdt, hgt) = WallRect(w);
-            await _context.FillRectAsync(x - 2, y - 2, wdt + 4, hgt + 4);
+            await ctx.SetFillStyleAsync("#555555");
+            foreach (var w in walls)
+            {
+                if (w.Point1 == null || w.Point2 == null) continue;
+                var (x, y, wdt, hgt) = WallRect(w);
+                await ctx.FillRectAsync(x, y, wdt, hgt);
+            }
+            return;
         }
 
-        foreach (var w in GameController.GetWalls())
+        // ── Step 1: Rasterize all walls into a global grid of occupied cells ──
+        var occupied = new HashSet<(int cx, int cy)>();
+        foreach (var w in walls)
         {
             if (w.Point1 == null || w.Point2 == null) continue;
-            var (x, y, wdt, hgt) = WallRect(w);
+            var (rx, ry, rw, rh) = WallRect(w);
+            int cols = (int)Math.Round(rw / bs);
+            int rows = (int)Math.Round(rh / bs);
+            int startCx = (int)Math.Round(rx / bs);
+            int startCy = (int)Math.Round(ry / bs);
+            for (int r = 0; r < rows; r++)
+                for (int c = 0; c < cols; c++)
+                    occupied.Add((startCx + c, startCy + r));
+        }
 
-            if (_highQualityTextures)
-            {
-                await _context.SaveAsync();
-                await _context.SetFillStyleAsync("#65696d");
-                await _context.FillRectAsync(x, y, wdt, hgt);
-                await _context.BeginPathAsync();
-                await _context.RectAsync(x, y, wdt, hgt);
-                await _context.ClipAsync();
+        // ── Step 2: Dark underpaint — each cell expanded by 3px on exposed sides ──
+        // This creates a continuous outline naturally, no edge strips needed.
+        const int border = 3;
+        await ctx.SetFillStyleAsync("#1a1c1f");
+        foreach (var (cx, cy) in occupied)
+        {
+            double px = cx * bs, py = cy * bs;
+            bool nT = occupied.Contains((cx, cy - 1));
+            bool nB = occupied.Contains((cx, cy + 1));
+            bool nL = occupied.Contains((cx - 1, cy));
+            bool nR = occupied.Contains((cx + 1, cy));
+            double ex = px - (nL ? 0 : border);
+            double ey = py - (nT ? 0 : border);
+            double ew = bs + (nL ? 0 : border) + (nR ? 0 : border);
+            double eh = bs + (nT ? 0 : border) + (nB ? 0 : border);
+            await ctx.FillRectAsync(ex, ey, ew, eh);
+        }
 
-                await _context.SetStrokeStyleAsync("#3a3c3f");
-                await _context.SetLineWidthAsync(2);
-                await _context.BeginPathAsync();
-                for (int by = (int)y + BrickSize; by < (int)(y + hgt); by += BrickSize)
-                {
-                    await _context.MoveToAsync(x, by);
-                    await _context.LineToAsync(x + wdt, by);
-                }
-                for (int by = (int)y; by < (int)(y + hgt); by += BrickSize)
-                {
-                    var offset = (Math.Abs(by) / BrickSize) % 2 == 0 ? 0 : 12;
-                    for (int bx = (int)x + BrickSize - offset; bx < (int)(x + wdt); bx += BrickSize)
-                    {
-                        await _context.MoveToAsync(bx, by);
-                        await _context.LineToAsync(bx, by + BrickSize);
-                    }
-                }
-                await _context.StrokeAsync();
-                await _context.RestoreAsync();
-            }
-            else
-            {
-                await _context.SetFillStyleAsync("#555555");
-                await _context.FillRectAsync(x, y, wdt, hgt);
-            }
+        // ── Step 3: Mortar base — fill each cell with mortar color ──
+        await ctx.SetFillStyleAsync("#3a3c3f");
+        foreach (var (cx, cy) in occupied)
+            await ctx.FillRectAsync(cx * bs, cy * bs, bs, bs);
+
+        // ── Step 4: Draw brick faces with mortar insets + running bond stagger ──
+        // FM = floor-mod, always returns 0..(b-1) even for negative coords
+        static int FM(int a, int b) => ((a % b) + b) % b;
+        const int m = 1; // mortar thickness on each side
+
+        foreach (var (cx, cy) in occupied)
+        {
+            double px = cx * bs, py = cy * bs;
+            bool nT = occupied.Contains((cx, cy - 1));
+            bool nB = occupied.Contains((cx, cy + 1));
+            bool nL = occupied.Contains((cx - 1, cy));
+            bool nR = occupied.Contains((cx + 1, cy));
+
+            // Every cell gets a horizontal mortar inset on interior top/bottom edges
+            int topInset = nT ? m : 0;
+            int botInset = nB ? m : 0;
+
+            // Vertical mortar: running bond — even rows split at FM(cx,2)==1, odd at FM(cx,2)==0
+            bool evenRow = FM(cy, 2) == 0;
+            bool jointLeft = evenRow ? FM(cx, 2) == 0 : FM(cx, 2) == 1;
+            bool jointRight = evenRow ? FM(cx, 2) == 1 : FM(cx, 2) == 0;
+            // Only inset if there's a neighbor to create a joint with
+            int leftInset = (nL && jointLeft) ? m : 0;
+            int rightInset = (nR && jointRight) ? m : 0;
+
+            double fx = px + leftInset;
+            double fy = py + topInset;
+            double fw = bs - leftInset - rightInset;
+            double fh = bs - topInset - botInset;
+
+            // Alternate shade per brick for subtle depth
+            int brickCol = evenRow
+                ? (int)Math.Floor(cx / 2.0)
+                : (int)Math.Floor((cx - 1) / 2.0);
+            int shade = FM(brickCol + cy, 2);
+            await ctx.SetFillStyleAsync(shade == 0 ? "#6d7175" : "#62666a");
+            await ctx.FillRectAsync(fx, fy, fw, fh);
         }
     }
 
@@ -806,23 +934,26 @@
 
     private async Task DrawPowerups()
     {
+        var ctx = _context;
+        if (ctx == null) return;
+
         var now = DateTime.UtcNow;
         foreach (var p in GameController.GetPowerups())
         {
             if (p.Location == null || p.Died) continue;
             var pulse = _highQualityTextures ? Math.Abs(Math.Sin(now.TimeOfDay.TotalSeconds * 5)) * 3 : 0;
 
-            await _context!.SetFillStyleAsync("gold");
-            await _context.BeginPathAsync();
-            await _context.ArcAsync(p.Location.X, p.Location.Y, 8 + pulse, 0, Math.PI * 2);
-            await _context.FillAsync();
+            await ctx.SetFillStyleAsync("gold");
+            await ctx.BeginPathAsync();
+            await ctx.ArcAsync(p.Location.X, p.Location.Y, 8 + pulse, 0, Math.PI * 2);
+            await ctx.FillAsync();
 
             if (_highQualityTextures)
             {
-                await _context.SetFillStyleAsync("yellow");
-                await _context.BeginPathAsync();
-                await _context.ArcAsync(p.Location.X, p.Location.Y, 4, 0, Math.PI * 2);
-                await _context.FillAsync();
+                await ctx.SetFillStyleAsync("yellow");
+                await ctx.BeginPathAsync();
+                await ctx.ArcAsync(p.Location.X, p.Location.Y, 4, 0, Math.PI * 2);
+                await ctx.FillAsync();
             }
         }
     }
@@ -835,7 +966,8 @@
             if (s.Disconnected == true) continue;
             if (s.Alive != true) continue;
             if (_deathAnimations.ContainsKey(s.Id)) continue;
-            if (s.Id == playerId && !_spawnSafe) continue;
+            // Hide the player snake while death screen is showing or during spawn safety check
+            if (s.Id == playerId && (_showDeathScreen || !_spawnSafe)) continue;
 
             var body = s.Body;
             if (body == null || body.Count < 2) continue;
