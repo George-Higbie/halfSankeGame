@@ -44,6 +44,11 @@ if (!window.snakeKeyHandlerAttached) {
             if (cmdKeys.includes(event.key)) {
                 event.preventDefault();
             }
+            if (event.key === "Shift") {
+                var side = event.code === "ShiftRight" ? "ShiftRight" : "ShiftLeft";
+                window.theInstance.invokeMethodAsync('HandleKeyPress', side);
+                return;
+            }
             window.theInstance.invokeMethodAsync('HandleKeyPress', event.key);
         }
     });

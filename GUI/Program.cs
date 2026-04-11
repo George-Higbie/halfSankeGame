@@ -6,9 +6,9 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
-// Register game services
-builder.Services.AddSingleton<GUI.Components.Controllers.NetworkController>();
-builder.Services.AddSingleton<GUI.Components.Controllers.GameController>(sp =>
+// Register game services (Scoped = one instance per Blazor circuit / browser tab)
+builder.Services.AddScoped<GUI.Components.Controllers.NetworkController>();
+builder.Services.AddScoped<GUI.Components.Controllers.GameController>(sp =>
 {
     var net = sp.GetRequiredService<GUI.Components.Controllers.NetworkController>();
     return new GUI.Components.Controllers.GameController(net);

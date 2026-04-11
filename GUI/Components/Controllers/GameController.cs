@@ -156,9 +156,9 @@ namespace GUI.Components.Controllers
             }
             else if (_snakes.TryGetValue(s.Id, out var existing))
             {
-                var wasDead = existing.Died != true;
+                var wasAlive = existing.Died != true;
                 MergeSnakeFields(existing, s);
-                if (existing.Died == true && PlayerId.HasValue && s.Id == PlayerId.Value)
+                if (existing.Died == true && wasAlive && PlayerId.HasValue && s.Id == PlayerId.Value)
                     OnPlayerDied?.Invoke();
             }
             else

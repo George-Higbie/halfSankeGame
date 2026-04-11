@@ -164,7 +164,6 @@
 /Users/alexwaldmann/PS9/GUI/obj/Debug/net10.0/compressed/qs060mh0d7-{0}-h1s4sie4z3-h1s4sie4z3.gz
 /Users/alexwaldmann/PS9/GUI/obj/Debug/net10.0/compressed/hrh1pii5fb-{0}-63fj8s7r0e-63fj8s7r0e.gz
 /Users/alexwaldmann/PS9/GUI/obj/Debug/net10.0/compressed/3w9aab73ky-{0}-0j3bgjxly4-0j3bgjxly4.gz
-/Users/alexwaldmann/PS9/GUI/obj/Debug/net10.0/compressed/8lwa20onfk-{0}-me0xos7w79-me0xos7w79.gz
 /Users/alexwaldmann/PS9/GUI/obj/Debug/net10.0/compressed/5p0pmevzh0-{0}-cyz5k529gx-cyz5k529gx.gz
 /Users/alexwaldmann/PS9/GUI/obj/Debug/net10.0/compressed/tpss8nq264-{0}-wmp8iwak4q-wmp8iwak4q.gz
 /Users/alexwaldmann/PS9/GUI/obj/Debug/net10.0/compressed/qyv3onybnn-{0}-2lgipwaf5j-2lgipwaf5j.gz
@@ -181,3 +180,4 @@
 /Users/alexwaldmann/PS9/GUI/obj/Debug/net10.0/GUI.pdb
 /Users/alexwaldmann/PS9/GUI/obj/Debug/net10.0/GUI.genruntimeconfig.cache
 /Users/alexwaldmann/PS9/GUI/obj/Debug/net10.0/ref/GUI.dll
+/Users/alexwaldmann/PS9/GUI/obj/Debug/net10.0/compressed/8lwa20onfk-{0}-be1amezrlu-be1amezrlu.gz

@@ -33,13 +33,13 @@
         <input type="number" @bind="Port" />
     </div>
     <div class="field-group">
-        <label>Name</label>
+        <label>@(_splitScreen ? "P1 Name" : "Name")</label>
         <input @bind="PlayerName" />
     </div>
 
     <div style="display:flex; gap:6px; margin-top:8px;">
-        <button class="btn-snake" @onclick="Connect">Connect</button>
-        <button class="btn-snake btn-secondary" @onclick="Reconnect">Reconnect</button>
+        <button class="btn-snake" @onclick="(() => Connect())">@(_splitScreen ? "Connect P1" : "Connect")</button>
+        <button class="btn-snake btn-secondary" @onclick="(() => Reconnect())">Reconnect</button>
     </div>
 
     <div class="status-line">@_status</div>
@@ -48,7 +48,23 @@
         <label class="toggle"><input type="checkbox" @bind="_highQualityTextures" /> High Quality</label>
         <label class="toggle"><input type="checkbox" @bind="_drawGrid" /> Grid Overlay</label>
         <label class="toggle"><input type="checkbox" @bind="_showScoreboard" /> Scoreboard</label>
+        <label class="toggle"><input type="checkbox" @bind="_splitScreen" /> Split Screen (2P)</label>
     </div>
+
+    @if (_splitScreen)
+    {
+    <div style="margin-top:12px; border-top:1px solid rgba(255,255,255,0.1); padding-top:10px;">
+        <strong style="font-size:0.85rem; text-transform:uppercase; letter-spacing:1px; opacity:0.7;">Player 2 (Arrows)</strong>
+        <div class="field-group" style="margin-top:6px;">
+            <label>P2 Name</label>
+            <input @bind="Player2Name" />
+        </div>
+        <div style="display:flex; gap:6px; margin-top:8px;">
+            <button class="btn-snake" @onclick="ConnectP2">Connect P2</button>
+        </div>
+        <div class="status-line">@_p2Status</div>
+    </div>
+    }
 
     @if (_showScoreboard)
     {
@@ -75,7 +91,7 @@
 @* ── Death Overlay ── *@
 @if (_showDeathScreen)
 {
-    <div class="death-overlay">
+    <div class="death-overlay" style="@(_splitScreen ? "right:50%; left:0;" : "")">
         <h1>GAME OVER</h1>
         <div class="death-scores">
             <h3>High Scores</h3>
@@ -89,7 +105,28 @@
                 }
             </ul>
         </div>
-        <button class="btn-respawn" @onclick="Respawn">Respawn</button>
+        <button class="btn-respawn" @onclick="RespawnP1">Respawn</button>
+        <span class="respawn-hint">@(_splitScreen ? "or press Left Shift" : "or press Shift")</span>
+    </div>
+}
+@if (_p2ShowDeath && _splitScreen)
+{
+    <div class="death-overlay" style="left:50%; right:0;">
+        <h1>GAME OVER</h1>
+        <div class="death-scores">
+            <h3>High Scores</h3>
+            <ul>
+                @foreach (var s in (_p2Game?.GetSnakes() ?? Array.Empty<Snake>()).OrderByDescending(x => x.Score ?? 0).Take(5))
+                {
+                    <li>
+                        <span>@(s.Name ?? "Anonymous")</span>
+                        <span>@(s.Score ?? 0)</span>
+                    </li>
+                }
+            </ul>
+        </div>
+        <button class="btn-respawn" @onclick="RespawnP2">Respawn</button>
+        <span class="respawn-hint">or press Right Shift</span>
     </div>
 }
 
@@ -268,6 +305,12 @@
         transition: background 0.15s, transform 0.1s;
     }
     .btn-respawn:hover { background: #43a047; transform: translateY(-1px); }
+    .respawn-hint {
+        margin-top: 10px;
+        font-size: 0.85rem;
+        opacity: 0.5;
+        letter-spacing: 0.5px;
+    }
     @@keyframes fadeIn { to { opacity: 1; } }
 </style>
 
@@ -286,36 +329,48 @@
     private const int FrameDelayMs = 16;
     private const int GridSpacing = 50;
     private const int BrickSize = 25;
-    private const double MinSpawnClearance = 100.0;
 
     // ==================== Private Fields ====================
     private BECanvasComponent? _canvasReference;
     private Canvas2DContext? _context;
     private CancellationTokenSource? _renderCts;
     private readonly Stopwatch _frameStopwatch = new();
-    private Action? _onDisconnectedHandler;
-    private readonly Dictionary<int, DeathAnim> _deathAnimations = new();
     private readonly string[] _colors = { "red", "green", "blue", "orange", "purple", "brown", "magenta", "teal" };
     private int _viewW = 1920;
     private int _viewH = 1080;
 
+    // P1 per-player state (uses DI-injected controllers)
+    private readonly Dictionary<int, DeathAnim> _p1DeathAnims = new();
+    private bool _showDeathScreen;
+    private int _frozenCameraX;
+    private int _frozenCameraY;
+    private string? _p1PendingMove;
+    private int? _centerTargetSnakeId;
+
+    // P2 per-player state (manually created controllers)
+    private NetworkController? _p2Network;
+    private GameController? _p2Game;
+    private readonly Dictionary<int, DeathAnim> _p2DeathAnims = new();
+    private bool _p2ShowDeath;
+    private int _p2FrozenCamX;
+    private int _p2FrozenCamY;
+    private string? _p2PendingMove;
+
+    // Wall cache keyed by controller (walls are static per connection)
+    private readonly Dictionary<GameController, HashSet<(int cx, int cy)>> _wallCaches = new();
+
     // ==================== UI State ====================
     private string Host { get; set; } = "localhost";
     private int Port { get; set; } = 11000;
-    private string PlayerName { get; set; } = "Player";
+    private string PlayerName { get; set; } = "Player 1";
+    private string Player2Name { get; set; } = "Player 2";
     private string _status = "Disconnected";
-    private bool _showDeathScreen;
-    private bool _spawnSafe;
-    private bool _rerolling;
-    private CancellationTokenSource? _rerollCts;
+    private string _p2Status = "Disconnected";
+    private bool _splitScreen;
     private bool _drawGrid = true;
     private bool _highQualityTextures = true;
     private bool _sidebarOpen = true;
     private bool _showScoreboard = true;
-    private int? _centerTargetSnakeId;
-    private int _frozenCameraX;
-    private int _frozenCameraY;
-    private string? _pendingMoveCmd;
     private static readonly Dictionary<string, string> _opposites = new()
     {
         ["up"] = "down", ["down"] = "up", ["left"] = "right", ["right"] = "left"
@@ -337,6 +392,10 @@
     {
         if (!firstRender) return;
 
+        // Create P2 controllers (P1 uses DI-injected ones)
+        _p2Network = new NetworkController();
+        _p2Game = new GameController(_p2Network);
+
         await JsRuntime.InvokeAsync<IJSObjectReference>("import", "./Components/Pages/SnakeGUI.razor.js");
         _context = await _canvasReference!.CreateCanvas2DAsync();
         await JsRuntime.InvokeAsync<object>("initRenderJS", DotNetObjectReference.Create(this));
@@ -344,65 +403,90 @@
         _renderCts = new CancellationTokenSource();
         _ = Task.Run(() => RenderLoopAsync(_renderCts.Token));
 
-        _onDisconnectedHandler = () => _ = InvokeAsync(() =>
-        {
-            _status = "Disconnected";
-            StateHasChanged();
-        });
-        NetworkController.OnDisconnected += _onDisconnectedHandler;
+        NetworkController.OnDisconnected += () => _ = InvokeAsync(() => { _status = "Disconnected"; StateHasChanged(); });
+        _p2Network.OnDisconnected += () => _ = InvokeAsync(() => { _p2Status = "Disconnected"; StateHasChanged(); });
 
-        GameController.OnPlayerDied += OnPlayerDied;
+        GameController.OnPlayerDied += OnP1Died;
+        _p2Game.OnPlayerDied += OnP2Died;
     }
 
     public void Dispose()
     {
         try { _renderCts?.Cancel(); } catch { }
-        try { _rerollCts?.Cancel(); } catch { }
-        if (_onDisconnectedHandler != null) NetworkController.OnDisconnected -= _onDisconnectedHandler;
-        GameController.OnPlayerDied -= OnPlayerDied;
+        GameController.OnPlayerDied -= OnP1Died;
+        if (_p2Game != null) _p2Game.OnPlayerDied -= OnP2Died;
+        _p2Network?.Dispose();
     }
 
     // ==================== Input ====================
 
     [JSInvokable]
-        public void UpdateViewportSize(int[] dims)
-        {
-            if (dims is { Length: 2 } && dims[0] > 0 && dims[1] > 0)
-            {
-                _viewW = dims[0];
-                _viewH = dims[1];
-            }
-        }
-
-        [JSInvokable]
-        public void HandleKeyPress(string key)
+    public void UpdateViewportSize(int[] dims)
     {
-        if (_showDeathScreen) return;
-
-        var cmd = key.ToLowerInvariant() switch
+        if (dims is { Length: 2 } && dims[0] > 0 && dims[1] > 0)
         {
-            "w" or "arrowup" => "up",
-            "a" or "arrowleft" => "left",
-            "s" or "arrowdown" => "down",
-            "d" or "arrowright" => "right",
-            _ => null
-        };
-        if (cmd == null) return;
-
-        // Reject the move if it would reverse the snake's actual travel direction.
-        // Uses the real body heading so rapid key spam (left → up → right) can't sneak a reversal.
-        var actualDir = GetSnakeHeading();
-        if (actualDir != null && _opposites.TryGetValue(cmd, out var opp) && opp == actualDir)
-            return;
-
-        // Buffer one command per render frame — only the last valid press is sent.
-        _pendingMoveCmd = cmd;
+            _viewW = dims[0];
+            _viewH = dims[1];
+        }
     }
 
-    /// <summary>Returns the snake's current travel direction based on its body segments.</summary>
-    private string? GetSnakeHeading()
+    [JSInvokable]
+    public void HandleKeyPress(string key)
     {
-        var snake = GameController.GetPlayerSnake();
+        // Shift respawn controls
+        if (key == "ShiftLeft")
+        {
+            if (_showDeathScreen) { RespawnP1(); return; }
+        }
+        if (key == "ShiftRight")
+        {
+            if (_splitScreen && _p2ShowDeath) { RespawnP2(); return; }
+            if (!_splitScreen && _showDeathScreen) { RespawnP1(); return; }
+        }
+
+        // WASD → P1
+        var p1Cmd = key.ToLowerInvariant() switch
+        {
+            "w" => "up", "a" => "left", "s" => "down", "d" => "right",
+            _ => (string?)null
+        };
+        if (p1Cmd != null)
+        {
+            if (_showDeathScreen) return;
+            var heading = GetSnakeHeading(GameController);
+            if (heading != null && _opposites.TryGetValue(p1Cmd, out var opp) && opp == heading) return;
+            Interlocked.Exchange(ref _p1PendingMove, p1Cmd);
+            return;
+        }
+
+        // Arrow keys → P2 when split screen is active; otherwise P1
+        var arrowCmd = key switch
+        {
+            "ArrowUp" => "up", "ArrowLeft" => "left",
+            "ArrowDown" => "down", "ArrowRight" => "right",
+            _ => (string?)null
+        };
+        if (arrowCmd == null) return;
+
+        if (_splitScreen && _p2Game != null)
+        {
+            if (_p2ShowDeath) return;
+            var h2 = GetSnakeHeading(_p2Game);
+            if (h2 != null && _opposites.TryGetValue(arrowCmd, out var opp2) && opp2 == h2) return;
+            Interlocked.Exchange(ref _p2PendingMove, arrowCmd);
+        }
+        else
+        {
+            if (_showDeathScreen) return;
+            var heading = GetSnakeHeading(GameController);
+            if (heading != null && _opposites.TryGetValue(arrowCmd, out var opp) && opp == heading) return;
+            Interlocked.Exchange(ref _p1PendingMove, arrowCmd);
+        }
+    }
+
+    private static string? GetSnakeHeading(GameController gc)
+    {
+        var snake = gc.GetPlayerSnake();
         if (snake?.Body == null || snake.Body.Count < 2) return null;
         var head = snake.Body[^1];
         var neck = snake.Body[^2];
@@ -416,101 +500,77 @@
 
     // ==================== Connection ====================
 
-    private async Task Connect()
+    private async Task Connect(bool closeSidebar = true)
     {
-        try { _rerollCts?.Cancel(); } catch { }
         _showDeathScreen = false;
-        _spawnSafe = false;
-        _rerolling = false;
+        _p1PendingMove = null;
+        if (closeSidebar) _sidebarOpen = false;
+        _wallCaches.Remove(GameController);
+        GameController.Disconnect();
+        try
+        {
+            _status = "Connecting...";
+            StateHasChanged();
+            await GameController.ConnectAsync(Host, Port, PlayerName);
+            _status = "Connected";
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            _status = "Error: " + ex.Message;
+            StateHasChanged();
+        }
+    }
+
+    private Task Reconnect() => Connect(closeSidebar: false);
+
+    private async Task ConnectP2()
+    {
+        if (_p2Game == null) return;
+        _p2ShowDeath = false;
+        _p2PendingMove = null;
+        _wallCaches.Remove(_p2Game);
         _sidebarOpen = false;
-        _pendingMoveCmd = null;
-        GameController.Disconnect();
+        _p2Game.Disconnect();
         try
         {
-            _status = "Connecting...";
+            _p2Status = "Connecting...";
             StateHasChanged();
-            await GameController.ConnectAsync(Host, Port, PlayerName);
-            _status = "Connected";
+            await _p2Game.ConnectAsync(Host, Port, Player2Name);
+            _p2Status = "Connected";
             StateHasChanged();
         }
         catch (Exception ex)
         {
-            _status = "Error: " + ex.Message;
+            _p2Status = "Error: " + ex.Message;
             StateHasChanged();
         }
     }
 
-    private async Task Reconnect()
+    private void RespawnP1()
     {
-        try { _rerollCts?.Cancel(); } catch { }
         _showDeathScreen = false;
-        _spawnSafe = false;
-        _rerolling = false;
-        await ConnectInternal();
+        _p1PendingMove = null;
+        _ = InvokeAsync(StateHasChanged);
     }
 
-    private async Task Respawn()
+    private void RespawnP2()
     {
-        try { _rerollCts?.Cancel(); } catch { }
-        _showDeathScreen = false;
-        // Force spawn validation/reroll to run before rendering the player again.
-        _spawnSafe = false;
-        _rerolling = false;
-        _pendingMoveCmd = null;
-        // Reconnect immediately so the server assigns a fresh alive snake
-        // instead of waiting for the server's RespawnRate (200 frames = 4s).
-        GameController.Disconnect();
-        try
-        {
-            await GameController.ConnectAsync(Host, Port, PlayerName);
-            _status = "Connected";
-        }
-        catch (Exception ex)
-        {
-            _status = "Error: " + ex.Message;
-        }
-        StateHasChanged();
+        _p2ShowDeath = false;
+        _p2PendingMove = null;
+        _ = InvokeAsync(StateHasChanged);
     }
 
-    /// <summary>Reconnects without touching death-screen state. Used by spawn reroll.</summary>
-    private async Task RerollReconnect()
-    {
-        _spawnSafe = false;
-        _rerolling = false;
-        await ConnectInternal();
-    }
-
-    private async Task ConnectInternal()
-    {
-        GameController.Disconnect();
-        try
-        {
-            _status = "Connecting...";
-            StateHasChanged();
-            await GameController.ConnectAsync(Host, Port, PlayerName);
-            _status = "Connected";
-            StateHasChanged();
-        }
-        catch (Exception ex)
-        {
-            _status = "Error: " + ex.Message;
-            StateHasChanged();
-        }
-    }
+    private void Respawn() => RespawnP1();
 
     // ==================== Game State ====================
 
-    private void OnPlayerDied()
+    private void OnP1Died()
     {
         if (_showDeathScreen) return;
-
-        try { _rerollCts?.Cancel(); } catch { }
         _showDeathScreen = true;
-        _spawnSafe = false;
-        _rerolling = false;
         _status = "Game Over";
 
-        // Freeze camera at the player's death position
         var player = GameController.GetPlayerSnake();
         if (player?.Body?.Count > 0)
         {
@@ -518,151 +578,25 @@
             _frozenCameraX = head.X;
             _frozenCameraY = head.Y;
         }
-        if (player != null) StartDeathAnimation(player);
-
-        // Don't disconnect — keep the connection alive so the world stays populated.
-        // The server auto-respawns, but we hide the player until they click Respawn.
 
         _ = InvokeAsync(StateHasChanged);
     }
 
-    private void CheckPlayerState()
+    private void OnP2Died()
     {
-        var player = GameController.GetPlayerSnake();
-        if (player == null) return;
+        if (_p2ShowDeath) return;
+        _p2ShowDeath = true;
+        _p2Status = "Game Over";
 
-        if (player.Alive == true && !_spawnSafe && !_showDeathScreen)
+        var player = _p2Game?.GetPlayerSnake();
+        if (player?.Body?.Count > 0)
         {
-            if (player.Body == null || player.Body.Count < 2) return;
-
-            if (IsSpawnSafe(player))
-            {
-                _spawnSafe = true;
-                _rerolling = false;
-            }
-            else if (!_rerolling)
-            {
-                _rerolling = true;
-                try { _rerollCts?.Cancel(); } catch { }
-                _rerollCts = new CancellationTokenSource();
-                var token = _rerollCts.Token;
-                _ = Task.Run(async () =>
-                {
-                    try
-                    {
-                        await Task.Delay(80, token);
-                        if (token.IsCancellationRequested || _showDeathScreen)
-                        {
-                            _rerolling = false;
-                            return;
-                        }
-
-                        await InvokeAsync(async () =>
-                        {
-                            if (_showDeathScreen)
-                            {
-                                _rerolling = false;
-                                return;
-                            }
-                            await RerollReconnect();
-                        });
-                    }
-                    catch (TaskCanceledException)
-                    {
-                        _rerolling = false;
-                    }
-                });
-            }
-        }
-    }
-
-    private bool IsSpawnSafe(Snake player)
-    {
-        if (player.Body == null || player.Body.Count < 2) return false;
-        var head = player.Body[^1];
-
-        foreach (var w in GameController.GetWalls())
-        {
-            if (w.Point1 == null || w.Point2 == null) continue;
-            double wx1 = Math.Min(w.Point1.X, w.Point2.X) - WallHalfWidth;
-            double wx2 = Math.Max(w.Point1.X, w.Point2.X) + WallHalfWidth;
-            double wy1 = Math.Min(w.Point1.Y, w.Point2.Y) - WallHalfWidth;
-            double wy2 = Math.Max(w.Point1.Y, w.Point2.Y) + WallHalfWidth;
-
-            if (DistToRect(head.X, head.Y, wx1, wy1, wx2, wy2) < MinSpawnClearance)
-                return false;
+            var head = player.Body[^1];
+            _p2FrozenCamX = head.X;
+            _p2FrozenCamY = head.Y;
         }
 
-        foreach (var s in GameController.GetSnakes())
-        {
-            if (s.Id == player.Id || s.Alive != true || s.Body == null || s.Body.Count < 2) continue;
-
-            for (int i = 0; i < s.Body.Count - 1; i++)
-            {
-                var a = s.Body[i];
-                var b = s.Body[i + 1];
-                for (int j = 0; j < player.Body.Count - 1; j++)
-                {
-                    var c = player.Body[j];
-                    var d = player.Body[j + 1];
-                    if (SegmentDist(a.X, a.Y, b.X, b.Y, c.X, c.Y, d.X, d.Y) < MinSpawnClearance)
-                        return false;
-                }
-            }
-
-            var otherHead = s.Body[^1];
-            for (int j = 0; j < player.Body.Count - 1; j++)
-            {
-                var c = player.Body[j];
-                var d = player.Body[j + 1];
-                if (PointToSegDist(otherHead.X, otherHead.Y, c.X, c.Y, d.X, d.Y) < MinSpawnClearance)
-                    return false;
-            }
-
-            for (int i = 0; i < s.Body.Count - 1; i++)
-            {
-                var a = s.Body[i];
-                var b = s.Body[i + 1];
-                if (PointToSegDist(head.X, head.Y, a.X, a.Y, b.X, b.Y) < MinSpawnClearance)
-                    return false;
-            }
-        }
-        return true;
-    }
-
-    private static double DistToRect(double px, double py, double rx1, double ry1, double rx2, double ry2)
-    {
-        double cx = Math.Max(rx1, Math.Min(px, rx2));
-        double cy = Math.Max(ry1, Math.Min(py, ry2));
-        double dx = px - cx, dy = py - cy;
-        return Math.Sqrt(dx * dx + dy * dy);
-    }
-
-    private static double PointToSegDist(double px, double py, double ax, double ay, double bx, double by)
-    {
-        double abx = bx - ax, aby = by - ay;
-        double len2 = abx * abx + aby * aby;
-        double t = len2 < 0.0001 ? 0 : Math.Clamp(((px - ax) * abx + (py - ay) * aby) / len2, 0, 1);
-        double cx = ax + t * abx, cy = ay + t * aby;
-        double dx = px - cx, dy = py - cy;
-        return Math.Sqrt(dx * dx + dy * dy);
-    }
-
-    private static double SegmentDist(double a1x, double a1y, double a2x, double a2y, double b1x, double b1y, double b2x, double b2y)
-    {
-        return Math.Min(
-            Math.Min(PointToSegDist(a1x, a1y, b1x, b1y, b2x, b2y), PointToSegDist(a2x, a2y, b1x, b1y, b2x, b2y)),
-            Math.Min(PointToSegDist(b1x, b1y, a1x, a1y, a2x, a2y), PointToSegDist(b2x, b2y, a1x, a1y, a2x, a2y)));
-    }
-
-    private void StartDeathAnimation(Snake snake)
-    {
-        if (_deathAnimations.ContainsKey(snake.Id)) return;
-        _deathAnimations[snake.Id] = new DeathAnim
-        {
-            Path = snake.Body?.ToList() ?? new List<Point2D>(),
-            Color = _colors[snake.Id % _colors.Length]
-        };
+        _ = InvokeAsync(StateHasChanged);
     }
 
     // ==================== Render Loop ====================
@@ -677,20 +611,19 @@
             {
                 try
                 {
-                    // Send at most one buffered move command per render frame
-                    var move = _pendingMoveCmd;
-                    if (move != null)
+                    // P1 move
+                    var move1 = Interlocked.Exchange(ref _p1PendingMove, null);
+                    if (move1 != null) _ = GameController.SendMoveAsync(move1);
+
+                    // P2 move
+                    if (_splitScreen && _p2Game != null)
                     {
-                        _pendingMoveCmd = null;
-                        _ = GameController.SendMoveAsync(move);
+                        var move2 = Interlocked.Exchange(ref _p2PendingMove, null);
+                        if (move2 != null) _ = _p2Game.SendMoveAsync(move2);
                     }
 
                     await DrawFrame();
-                    if (++tick % 6 == 0)
-                    {
-                        CheckPlayerState();
-                        await InvokeAsync(StateHasChanged);
-                    }
+                    if (++tick % 6 == 0) await InvokeAsync(StateHasChanged);
                 }
                 catch { /* skip frame */ }
                 await Task.Delay(FrameDelayMs, ct);
@@ -708,35 +641,76 @@
         var elapsed = _frameStopwatch.Elapsed.TotalSeconds;
         _frameStopwatch.Restart();
 
-        try
-        {
-            var dims = await JsRuntime.InvokeAsync<int[]>("getViewportSize");
-            if (dims is { Length: 2 } && dims[0] > 0 && dims[1] > 0)
-            {
-                _viewW = dims[0];
-                _viewH = dims[1];
-            }
-        }
-        catch { }
-
         await _context.BeginBatchAsync();
         await _context.SetFillStyleAsync(_highQualityTextures ? "#7c9c45" : "#e8f5ff");
         await _context.FillRectAsync(0, 0, _viewW, _viewH);
 
-        var worldSize = GameController.WorldSize ?? 2000;
+        if (_splitScreen && _p2Game != null)
+        {
+            var halfW = _viewW / 2;
+
+            // Resolve P1 center target
+            if (_centerTargetSnakeId.HasValue)
+            {
+                if (!GameController.GetSnakes().Any(s => s.Id == _centerTargetSnakeId.Value))
+                    _centerTargetSnakeId = null;
+            }
+
+            // Left viewport — P1 (WASD)
+            await DrawViewport(GameController, _p1DeathAnims, _showDeathScreen,
+                _frozenCameraX, _frozenCameraY, _centerTargetSnakeId,
+                0, 0, halfW, _viewH, elapsed);
+
+            // Right viewport — P2 (Arrows)
+            await DrawViewport(_p2Game, _p2DeathAnims, _p2ShowDeath,
+                _p2FrozenCamX, _p2FrozenCamY, null,
+                halfW, 0, halfW, _viewH, elapsed);
+
+            // Divider line
+            await _context.SetStrokeStyleAsync("rgba(255,255,255,0.4)");
+            await _context.SetLineWidthAsync(2);
+            await _context.BeginPathAsync();
+            await _context.MoveToAsync(halfW, 0);
+            await _context.LineToAsync(halfW, _viewH);
+            await _context.StrokeAsync();
+
+            // Player labels
+            await _context.SetFillStyleAsync("rgba(255,255,255,0.5)");
+            await _context.SetFontAsync("bold 16px Arial");
+            await _context.FillTextAsync("P1 (WASD)", 10, 24);
+            await _context.FillTextAsync("P2 (Arrows)", halfW + 10, 24);
+        }
+        else
+        {
+            // Resolve center target
+            if (_centerTargetSnakeId.HasValue)
+            {
+                if (!GameController.GetSnakes().Any(s => s.Id == _centerTargetSnakeId.Value))
+                    _centerTargetSnakeId = null;
+            }
+
+            await DrawViewport(GameController, _p1DeathAnims, _showDeathScreen,
+                _frozenCameraX, _frozenCameraY, _centerTargetSnakeId,
+                0, 0, _viewW, _viewH, elapsed);
+        }
+
+        await _context.EndBatchAsync();
+    }
+
+    private async Task DrawViewport(
+        GameController gc, Dictionary<int, DeathAnim> deathAnims,
+        bool showDeath, int frozenCamX, int frozenCamY, int? centerTargetId,
+        int vx, int vy, int vw, int vh, double elapsed)
+    {
+        var worldSize = gc.WorldSize ?? 2000;
 
         Snake? centerSnake = null;
-        if (_centerTargetSnakeId.HasValue)
-            centerSnake = GameController.GetSnakes().FirstOrDefault(s => s.Id == _centerTargetSnakeId.Value);
-        centerSnake ??= GameController.GetPlayerSnake();
+        if (centerTargetId.HasValue)
+            centerSnake = gc.GetSnakes().FirstOrDefault(s => s.Id == centerTargetId.Value);
+        centerSnake ??= gc.GetPlayerSnake();
 
         int centerX = 0, centerY = 0;
-        if (_showDeathScreen)
-        {
-            // Keep camera locked where the player died
-            centerX = _frozenCameraX;
-            centerY = _frozenCameraY;
-        }
+        if (showDeath) { centerX = frozenCamX; centerY = frozenCamY; }
         else if (centerSnake?.Body?.Count > 0)
         {
             var head = centerSnake.Body[^1];
@@ -745,28 +719,41 @@
         }
 
         var halfWorld = worldSize / 2;
-        centerX = Math.Clamp(centerX, -halfWorld + _viewW / 2, halfWorld - _viewW / 2);
-        centerY = Math.Clamp(centerY, -halfWorld + _viewH / 2, halfWorld - _viewH / 2);
+        var minCx = -halfWorld + vw / 2;
+        var maxCx = halfWorld - vw / 2;
+        var minCy = -halfWorld + vh / 2;
+        var maxCy = halfWorld - vh / 2;
+        if (minCx < maxCx) centerX = Math.Clamp(centerX, minCx, maxCx);
+        else centerX = 0;
+        if (minCy < maxCy) centerY = Math.Clamp(centerY, minCy, maxCy);
+        else centerY = 0;
 
+        await _context!.SaveAsync();
         await _context.BeginPathAsync();
-        await _context.RectAsync(0, 0, _viewW, _viewH);
+        await _context.RectAsync(vx, vy, vw, vh);
         await _context.ClipAsync();
-        await _context.SaveAsync();
-        // Pixel-align camera translation so wall edges don't anti-alias inconsistently.
-        var camX = Math.Round(_viewW / 2.0 - centerX);
-        var camY = Math.Round(_viewH / 2.0 - centerY);
+
+        var camX = Math.Round(vx + vw / 2.0 - centerX);
+        var camY = Math.Round(vy + vh / 2.0 - centerY);
         await _context.TranslateAsync(camX, camY);
 
         if (_drawGrid && _highQualityTextures)
             await DrawGrid(worldSize);
 
-        await DrawDeathAnimations(elapsed);
-        await DrawWalls();
-        await DrawPowerups();
-        await DrawSnakes();
+        await DrawDeathAnimations(elapsed, deathAnims);
+        await DrawWalls(gc);
+        await DrawPowerups(gc);
+        await DrawSnakes(gc, deathAnims, showDeath);
+
+        // In-viewport "GAME OVER" text when dead in split mode
+        if (showDeath && _splitScreen)
+        {
+            await _context.SetFillStyleAsync("rgba(255,68,68,0.7)");
+            await _context.SetFontAsync("bold 48px Arial");
+            await _context.FillTextAsync("GAME OVER", centerX - 140, centerY);
+        }
 
         await _context.RestoreAsync();
-        await _context.EndBatchAsync();
     }
 
     private async Task DrawGrid(int worldSize)
@@ -785,15 +772,14 @@
         await _context.StrokeAsync();
     }
 
-    private async Task DrawDeathAnimations(double elapsed)
+    private async Task DrawDeathAnimations(double elapsed, Dictionary<int, DeathAnim> deathAnims)
     {
         var finished = new List<int>();
-        foreach (var (id, anim) in _deathAnimations)
+        foreach (var (id, anim) in deathAnims)
         {
             if (anim.IsFinished)
             {
-                if (!GameController.GetSnakes().Any(s => s.Id == id))
-                    finished.Add(id);
+                finished.Add(id);
                 continue;
             }
 
@@ -882,15 +868,15 @@
                 anim.IsFinished = true;
         }
         foreach (var id in finished)
-            _deathAnimations.Remove(id);
+            deathAnims.Remove(id);
     }
 
-    private async Task DrawWalls()
+    private async Task DrawWalls(GameController gc)
     {
         var ctx = _context;
         if (ctx == null) return;
 
-        var walls = GameController.GetWalls();
+        var walls = gc.GetWalls();
         const int bs = BrickSize;
 
         if (!_highQualityTextures)
@@ -905,23 +891,28 @@
             return;
         }
 
-        // ── Step 1: Rasterize all walls into a global grid of occupied cells ──
-        var occupied = new HashSet<(int cx, int cy)>();
-        foreach (var w in walls)
+        // ── Step 1: Rasterize all walls into a global grid of occupied cells (cached) ──
+        // Rebuild if the cache was built empty (race during handshake) but walls are now available
+        if (!_wallCaches.TryGetValue(gc, out var occupied) ||
+            (occupied.Count == 0 && walls.Count > 0))
         {
-            if (w.Point1 == null || w.Point2 == null) continue;
-            var (rx, ry, rw, rh) = WallRect(w);
-            int cols = (int)Math.Round(rw / bs);
-            int rows = (int)Math.Round(rh / bs);
-            int startCx = (int)Math.Round(rx / bs);
-            int startCy = (int)Math.Round(ry / bs);
-            for (int r = 0; r < rows; r++)
-                for (int c = 0; c < cols; c++)
-                    occupied.Add((startCx + c, startCy + r));
+            occupied = new HashSet<(int cx, int cy)>();
+            foreach (var w in walls)
+            {
+                if (w.Point1 == null || w.Point2 == null) continue;
+                var (rx, ry, rw, rh) = WallRect(w);
+                int cols = (int)Math.Round(rw / bs);
+                int rows = (int)Math.Round(rh / bs);
+                int startCx = (int)Math.Round(rx / bs);
+                int startCy = (int)Math.Round(ry / bs);
+                for (int r = 0; r < rows; r++)
+                    for (int c = 0; c < cols; c++)
+                        occupied.Add((startCx + c, startCy + r));
+            }
+            _wallCaches[gc] = occupied;
         }
 
         // ── Step 2: Mortar fill — each cell expanded on exposed sides to form the wall border ──
-        // The border IS mortar, not a separate outline. No doubling.
         const int border = 2;
         await ctx.SetFillStyleAsync("#2e3033");
         foreach (var (cx, cy) in occupied)
@@ -939,7 +930,6 @@
         }
 
         // ── Step 3: Draw brick faces with running bond ──
-        // Mortar is already painted; bricks are inset uniformly on all sides.
         static int FM(int a, int b) => ((a % b) + b) % b;
         const int m = 1;
 
@@ -947,11 +937,9 @@
         {
             double px = cx * bs, py = cy * bs;
 
-            // Uniform mortar inset on all sides — horizontal courses always visible
             int topInset = m;
             int botInset = m;
 
-            // Running bond: even rows have vertical joint at even cx, odd rows at odd cx
             bool evenRow = FM(cy, 2) == 0;
             bool isJoint = evenRow ? FM(cx, 2) == 0 : FM(cx, 2) == 1;
             int leftInset = isJoint ? m : 0;
@@ -962,7 +950,6 @@
             double fw = bs - leftInset - rightInset;
             double fh = bs - topInset - botInset;
 
-            // Alternate shade per brick
             int brickCol = evenRow
                 ? (int)Math.Floor(cx / 2.0)
                 : (int)Math.Floor((cx - 1) / 2.0);
@@ -983,13 +970,13 @@
         return (x, y, wdt, hgt);
     }
 
-    private async Task DrawPowerups()
+    private async Task DrawPowerups(GameController gc)
     {
         var ctx = _context;
         if (ctx == null) return;
 
         var now = DateTime.UtcNow;
-        foreach (var p in GameController.GetPowerups())
+        foreach (var p in gc.GetPowerups())
         {
             if (p.Location == null || p.Died) continue;
             var pulse = _highQualityTextures ? Math.Abs(Math.Sin(now.TimeOfDay.TotalSeconds * 5)) * 3 : 0;
@@ -1009,16 +996,15 @@
         }
     }
 
-    private async Task DrawSnakes()
+    private async Task DrawSnakes(GameController gc, Dictionary<int, DeathAnim> deathAnims, bool showDeath)
     {
-        var playerId = GameController.GetPlayerSnake()?.Id;
-        foreach (var s in GameController.GetSnakes())
+        var playerId = gc.GetPlayerSnake()?.Id;
+        foreach (var s in gc.GetSnakes())
         {
             if (s.Disconnected == true) continue;
             if (s.Alive != true) continue;
-            if (_deathAnimations.ContainsKey(s.Id)) continue;
-            // Hide the player snake while death screen is showing or during spawn safety check
-            if (s.Id == playerId && (_showDeathScreen || !_spawnSafe)) continue;
+            if (deathAnims.ContainsKey(s.Id)) continue;
+            if (s.Id == playerId && showDeath) continue;
 
             var body = s.Body;
             if (body == null || body.Count < 2) continue;
@@ -1062,20 +1048,20 @@
             }
         }
 
-        // Create death animations for ANY snake that just died (not just the player)
-        foreach (var s in GameController.GetSnakes())
+        // Create death animations for ANY snake that just died
+        foreach (var s in gc.GetSnakes())
         {
-            if (s.Died == true && !_deathAnimations.ContainsKey(s.Id))
+            if ((s.Died == true || s.Alive != true) && s.Body?.Count >= 2 && !deathAnims.ContainsKey(s.Id) && s.Disconnected != true)
             {
-                _deathAnimations[s.Id] = new DeathAnim
+                deathAnims[s.Id] = new DeathAnim
                 {
-                    Path = s.Body?.ToList() ?? new List<Point2D>(),
+                    Path = s.Body.ToList(),
                     Color = _colors[s.Id % _colors.Length]
                 };
             }
-            else if (s.Alive == true)
+            else if (s.Alive == true && deathAnims.TryGetValue(s.Id, out var da) && da.IsFinished)
             {
-                _deathAnimations.Remove(s.Id);
+                deathAnims.Remove(s.Id);
             }
         }
     }
