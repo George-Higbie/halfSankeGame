@@ -54,7 +54,12 @@
 
 @if (_showDeathScreen)
 {
-    <div style="position: fixed; left: 0; top: 0; width: 100%; height: 100%; z-index: 20; background: rgba(0,0,0,0.7); display: flex; flex-direction: column; justify-content: center; align-items: center; color: white;">
+    <div style="position: fixed; left: 0; top: 0; width: 100%; height: 100%; z-index: 20; background: rgba(0,0,0,0.7); display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; animation: fadeIn 1s ease-in-out forwards; animation-delay: 0.25s; opacity: 0;">
+        <style>
+            @@keyframes fadeIn {
+                to { opacity: 1; }
+            }
+        </style>
         <h1 style="font-size: 4rem; color: #ff4444; font-weight: bold; margin-bottom: 24px; text-shadow: 2px 2px 4px #000;">GAME OVER</h1>
         
         <h2>High Scores</h2>
@@ -108,7 +113,7 @@
                 if (player != null && player.died && !_showDeathScreen) {
                     _showDeathScreen = true;
                     // Provide a nice freeze frame / explosion animation time before true disconnect
-                    _ = Task.Delay(1500).ContinueWith(_ => InvokeAsync(() => {
+                    _ = Task.Delay(2000).ContinueWith(_ => InvokeAsync(() => {
                         GameController.Disconnect();
                         StateHasChanged();
                     }));
@@ -266,7 +271,7 @@
     private readonly string[] _colors = new[] { "red", "green", "blue", "orange", "purple", "brown", "magenta", "teal" };
     private class DeathAnim
     {
-        public double Progress { get; set; } = 0.0;
+        public double ElapsedSeconds { get; set; } = 0.0;
         public IReadOnlyList<Point2D> Path { get; set; } = Array.Empty<Point2D>();
         public string Color { get; set; } = "orange";
     }
@@ -463,7 +468,7 @@
             {
                 _deathAnimations[s.snake] = new DeathAnim 
                 { 
-                    Progress = 0.0, 
+                    ElapsedSeconds = 0.0, 
                     Path = s.body?.ToList() ?? new List<Point2D>(),
                     Color = color
                 };
@@ -529,8 +534,6 @@
                 continue;
             }
 
-            // progress represents the distance down the snake of the explosion
-            // We want smaller explosions down the tail, and a big one at the head
             var head = path.Last();
             
             // Calculate total length
@@ -544,8 +547,13 @@
                 lengths.Add(dist);
                 totalLength += dist;
             }
-
-            var explodedLength = totalLength * anim.Progress;
+            
+            // Explosion settings: 1 bit = 10 units of distance, explodes every 0.05s
+            double bitDistance = 20.0;
+            double explosionDelaySeconds = 0.05;
+            double explosionSpeed = bitDistance / explosionDelaySeconds; // units per second
+            
+            double explodedLength = anim.ElapsedSeconds * explosionSpeed;
             double currentDist = 0;
             
             // Draw the unexploded body backwards from the tail to the explosion front
@@ -590,40 +598,31 @@
             }
 
             currentDist = 0; // reset for particles pass
-            
-            // Draw head explosion: starts immediately and fades
-            var headAlpha = Math.Max(0, 1.0 - (anim.Progress * 2.0));
-            var headRadius = 20 + Math.Min(anim.Progress * 80, 50);
-            if (headAlpha > 0)
-            {
-                await _context.SetGlobalAlphaAsync((float)headAlpha);
-                await _context.SetFillStyleAsync(anim.Color);
-                await _context.BeginPathAsync();
-                await _context.ArcAsync(head.X, head.Y, headRadius, 0, Math.PI * 2);
-                await _context.FillAsync();
-            }
 
             // Draw chain explosions along the body segments backwards
             for (int i = path.Count - 1; i > 0; i--)
             {
                 var segLen = lengths[i - 1];
-                double steps = Math.Max(1, Math.Ceiling(segLen / 20.0)); // bit by bit
+                double steps = Math.Max(1, Math.Ceiling(segLen / bitDistance)); 
                 
                 for (int j = 0; j <= steps; j++)
                 {
                     var t = j / steps;
                     var ptDist = currentDist + (segLen * t); // distance from head
                     
-                    var explosionFront = anim.Progress * totalLength;
-                    var timeSinceExplosion = (explosionFront - ptDist) / 100.0; // speed tuning
+                    var bitDetonationTime = ptDist / explosionSpeed;
+                    var timeSinceExplosion = anim.ElapsedSeconds - bitDetonationTime;
                     
-                    if (timeSinceExplosion > 0 && timeSinceExplosion < 1.0)
+                    if (timeSinceExplosion >= 0 && timeSinceExplosion <= 0.6) // 0.6s particle lifespan
                     {
                         var bx = path[i].X + (path[i - 1].X - path[i].X) * t;
                         var by = path[i].Y + (path[i - 1].Y - path[i].Y) * t;
                         
-                        var bAlpha = Math.Max(0, 1.0 - timeSinceExplosion);
-                        var bRadius = 5 + timeSinceExplosion * 25;
+                        var bAlpha = Math.Max(0, 1.0 - (timeSinceExplosion / 0.6));
+                        var baseRadius = ptDist < bitDistance ? 20 : 5; // Head explosion is bigger
+                        var expandFactor = ptDist < bitDistance ? 60 : 25; // Expand further if head
+                        var bRadius = baseRadius + (timeSinceExplosion / 0.6) * expandFactor;
+                        
                         await _context.SetGlobalAlphaAsync((float)bAlpha);
                         await _context.SetFillStyleAsync(anim.Color);
                         await _context.BeginPathAsync();
@@ -636,9 +635,12 @@
             
             await _context.SetGlobalAlphaAsync(1.0f); // Reset alpha
 
-            // Adjust progress speed to account for ~0.05s per bit. Slower explosions
-            anim.Progress += 0.008; // slower pacing
-            if (anim.Progress >= 1.5) // allow fade out
+            // Advance frame time (16ms typical 60fps)
+            anim.ElapsedSeconds += 0.016; 
+            
+            // allow full cleanup when wave has passed body by ~1 second
+            var timeToFinishSnake = totalLength / explosionSpeed;
+            if (anim.ElapsedSeconds > timeToFinishSnake + 1.0) 
             {
                 completedAnims.Add(id);
             }
