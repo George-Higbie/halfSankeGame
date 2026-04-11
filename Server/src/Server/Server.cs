@@ -8,6 +8,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.Versioning;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Xml;
 using NetworkUtil;
@@ -171,6 +172,7 @@ public class Server
 		{
 			while (watch.ElapsedMilliseconds < msPerFrame)
 			{
+				Thread.Sleep(1);
 			}
 			interval += watch.ElapsedMilliseconds;
 			watch.Restart();
@@ -251,7 +253,7 @@ internal class GameConfig
 	protected GameConfig()
 	{
 		universeSize = 750;
-		msPerFrame = 33;
+		msPerFrame = 16;
 		respawnRate = 300;
 		walls = new List<Wall>();
 	}

@@ -346,6 +346,7 @@
     private int _frozenCameraY;
     private string? _p1PendingMove;
     private int? _centerTargetSnakeId;
+    private volatile bool _p1Ready;
 
     // P2 per-player state (manually created controllers)
     private NetworkController? _p2Network;
@@ -355,6 +356,7 @@
     private int _p2FrozenCamX;
     private int _p2FrozenCamY;
     private string? _p2PendingMove;
+    private volatile bool _p2Ready;
 
     // Wall cache keyed by controller (walls are static per connection)
     private readonly Dictionary<GameController, HashSet<(int cx, int cy)>> _wallCaches = new();
@@ -452,7 +454,7 @@
         };
         if (p1Cmd != null)
         {
-            if (_showDeathScreen) return;
+            if (_showDeathScreen || !_p1Ready) return;
             var heading = GetSnakeHeading(GameController);
             if (heading != null && _opposites.TryGetValue(p1Cmd, out var opp) && opp == heading) return;
             Interlocked.Exchange(ref _p1PendingMove, p1Cmd);
@@ -470,14 +472,14 @@
 
         if (_splitScreen && _p2Game != null)
         {
-            if (_p2ShowDeath) return;
+            if (_p2ShowDeath || !_p2Ready) return;
             var h2 = GetSnakeHeading(_p2Game);
             if (h2 != null && _opposites.TryGetValue(arrowCmd, out var opp2) && opp2 == h2) return;
             Interlocked.Exchange(ref _p2PendingMove, arrowCmd);
         }
         else
         {
-            if (_showDeathScreen) return;
+            if (_showDeathScreen || !_p1Ready) return;
             var heading = GetSnakeHeading(GameController);
             if (heading != null && _opposites.TryGetValue(arrowCmd, out var opp) && opp == heading) return;
             Interlocked.Exchange(ref _p1PendingMove, arrowCmd);
@@ -504,6 +506,7 @@
     {
         _showDeathScreen = false;
         _p1PendingMove = null;
+        _p1Ready = false;
         if (closeSidebar) _sidebarOpen = false;
         _wallCaches.Remove(GameController);
         GameController.Disconnect();
@@ -529,6 +532,7 @@
         if (_p2Game == null) return;
         _p2ShowDeath = false;
         _p2PendingMove = null;
+        _p2Ready = false;
         _wallCaches.Remove(_p2Game);
         _sidebarOpen = false;
         _p2Game.Disconnect();
@@ -625,6 +629,13 @@
                     }
 
                     await DrawFrame();
+
+                    // Mark players ready once their snake has been rendered
+                    if (!_p1Ready && GameController.GetPlayerSnake()?.Body?.Count > 0)
+                        _p1Ready = true;
+                    if (!_p2Ready && _p2Game?.GetPlayerSnake()?.Body?.Count > 0)
+                        _p2Ready = true;
+
                     if (++tick % 6 == 0) await InvokeAsync(StateHasChanged);
                 }
                 catch { /* skip frame */ }
