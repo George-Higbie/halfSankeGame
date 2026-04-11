@@ -48,9 +48,30 @@
     </div>
 </div>
 
-<div id="snakeCanvas" style="position: fixed; width: 100%; height: 100%">
+<div id="snakeCanvas" style="position: fixed; width: 100%; height: 100%; z-index: 1;">
     <BECanvas Width="1000" Height="1000" @ref="_canvasReference"></BECanvas>
 </div>
+
+@if (_showDeathScreen)
+{
+    <div style="position: fixed; left: 0; top: 0; width: 100%; height: 100%; z-index: 20; background: rgba(0,0,0,0.7); display: flex; flex-direction: column; justify-content: center; align-items: center; color: white;">
+        <h1 style="font-size: 4rem; color: #ff4444; font-weight: bold; margin-bottom: 24px; text-shadow: 2px 2px 4px #000;">GAME OVER</h1>
+        
+        <h2>High Scores</h2>
+        <ul style="list-style: none; padding: 0; min-width: 200px; text-align: left; background: rgba(255,255,255,0.1); padding: 16px; border-radius: 8px;">
+            @foreach (var s in GameController.GetSnakes().OrderByDescending(x => x.score).Take(5))
+            {
+                <li style="font-size: 1.2rem; padding: 4px; border-bottom: 1px solid rgba(255,255,255,0.2);">
+                    @(s.name ?? "Anonymous") <span style="float: right;">@s.score</span>
+                </li>
+            }
+        </ul>
+
+        <button style="margin-top: 24px; font-size: 1.5rem; padding: 12px 32px; background: #4caf50; color: white; border: none; border-radius: 8px; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.5);" @onclick="Respawn">
+            Respawn
+        </button>
+    </div>
+}
 
 @code
 {
@@ -67,6 +88,8 @@
 
 
 
+    private bool _showDeathScreen = false;
+
     protected override async Task OnAfterRenderAsync( bool firstRender )
     {
         if ( firstRender )
@@ -80,9 +103,23 @@
             _ = Task.Run(() => RenderLoopAsync(_renderCts.Token));
 
             // subscribe to game/network events to update UI
-            _onStateUpdatedHandler = () => _ = InvokeAsync(StateHasChanged);
+            _onStateUpdatedHandler = () => _ = InvokeAsync(() => {
+                var player = GameController.GetPlayerSnake();
+                if (player != null && player.died && !_showDeathScreen) {
+                    _showDeathScreen = true;
+                    // Provide a nice freeze frame / explosion animation time before true disconnect
+                    _ = Task.Delay(1500).ContinueWith(_ => InvokeAsync(() => {
+                        GameController.Disconnect();
+                        StateHasChanged();
+                    }));
+                }
+                StateHasChanged();
+            });
             GameController.OnStateUpdated += _onStateUpdatedHandler;
-            _onDisconnectedHandler = () => _ = InvokeAsync(() => { _status = "disconnected"; StateHasChanged(); });
+            _onDisconnectedHandler = () => _ = InvokeAsync(() => { 
+                _status = "disconnected"; 
+                if (!_showDeathScreen) StateHasChanged(); 
+            });
             NetworkController.OnDisconnected += _onDisconnectedHandler;
         }
     }
@@ -113,8 +150,16 @@
         Debug.WriteLine("key pressed: " + key + " -> " + cmd);
     }
 
+    private void Respawn()
+    {
+        _showDeathScreen = false;
+        _deathAnimations.Clear();
+        _ = Reconnect();
+    }
+
     private async Task Connect()
     {
+        _showDeathScreen = false;
         // single-shot connect (no retries)
         try
         {
@@ -133,6 +178,7 @@
 
     private async Task ConnectWithRetries(int maxAttempts = 6)
     {
+        _showDeathScreen = false;
         _reconnectCts?.Cancel();
         _reconnectCts = new CancellationTokenSource();
         var ct = _reconnectCts.Token;
@@ -218,7 +264,14 @@
     }
 
     private readonly string[] _colors = new[] { "red", "green", "blue", "orange", "purple", "brown", "magenta", "teal" };
-    private readonly Dictionary<int, double> _deathAnimations = new();
+    private class DeathAnim
+    {
+        public double Progress { get; set; } = 0.0;
+        public IReadOnlyList<Point2D> Path { get; set; } = Array.Empty<Point2D>();
+        public string Color { get; set; } = "orange";
+    }
+
+    private readonly Dictionary<int, DeathAnim> _deathAnimations = new();
 
     // reconnect state
     private CancellationTokenSource? _reconnectCts;
@@ -328,18 +381,26 @@
                 await _context.RectAsync(x, y, wdt, hgt);
                 await _context.ClipAsync();
 
-                // Draw brick pattern using basic overlapping rectangles 
+                // Draw brick pattern with individual lines to avoid overlapping stroke darkness
                 await _context.SetStrokeStyleAsync("#3a3c3f");
                 await _context.SetLineWidthAsync(2);
                 await _context.BeginPathAsync();
                 
+                // Horizontal lines
+                for (int by = (int)y; by <= (int)(y + hgt); by += 25)
+                {
+                    await _context.MoveToAsync(x, by);
+                    await _context.LineToAsync(x + wdt, by);
+                }
+                
+                // Vertical lines (staggered)
                 for (int by = (int)y; by < (int)(y + hgt); by += 25)
                 {
-                    // Alternate row offsets for the brick layout
                     var offset = (Math.Abs(by) / 25) % 2 == 0 ? 0 : 12;
-                    for (int bx = (int)x - offset - 25; bx < (int)(x + wdt) + 25; bx += 25)
+                    for (int bx = (int)x - offset; bx <= (int)(x + wdt) + 25; bx += 25)
                     {
-                        await _context.StrokeRectAsync(bx, by, 25, 25);
+                        await _context.MoveToAsync(bx, by);
+                        await _context.LineToAsync(bx, by + 25);
                     }
                 }
                 await _context.StrokeAsync();
@@ -386,35 +447,21 @@
         {
             if (s.dc) continue;
 
+            var color = _colors[s.snake % _colors.Length];
+
             // draw death animation if this snake died on the last received frame
-            if (s.died)
+            if (s.died && !_deathAnimations.ContainsKey(s.snake))
             {
-                _deathAnimations[s.snake] = 0.0;
-            }
-
-            if (_deathAnimations.TryGetValue(s.snake, out var prog))
-            {
-                // draw expanding circle
-                var radius = 10 + prog * 60;
-                var alpha = Math.Max(0, 1.0 - prog);
-                await _context.SetFillStyleAsync($"rgba(255,80,0,{alpha:F2})");
-                
-                var explX = s.body != null && s.body.Count > 0 ? s.body.Last().X : 0.0;
-                var explY = s.body != null && s.body.Count > 0 ? s.body.Last().Y : 0.0;
-
-                await _context.BeginPathAsync();
-                await _context.ArcAsync(explX, explY, radius, 0, Math.PI * 2);
-                await _context.FillAsync();
-                
-                prog += 0.05; // advance animation
-                if (prog >= 1.0) _deathAnimations.Remove(s.snake);
-                else _deathAnimations[s.snake] = prog;
+                _deathAnimations[s.snake] = new DeathAnim 
+                { 
+                    Progress = 0.0, 
+                    Path = s.body?.ToList() ?? new List<Point2D>(),
+                    Color = color
+                };
             }
 
             if (!s.alive) continue;
             if (s.body == null || s.body.Count < 2) continue;
-
-            var color = _colors[s.snake % _colors.Length];
 
             // draw path exactly as the server specifies
             await _context.SetStrokeStyleAsync(color);
@@ -458,6 +505,84 @@
                 await _context.SetFontAsync("bold 14px Arial");
                 await _context.FillTextAsync($"{s.name}: {s.score}", head.X + 12, head.Y - 12);
             }
+        }
+
+        // process and draw death animations independently
+        var completedAnims = new List<int>();
+        foreach (var kvp in _deathAnimations)
+        {
+            var id = kvp.Key;
+            var anim = kvp.Value;
+            var path = anim.Path;
+            if (path == null || path.Count < 2)
+            {
+                completedAnims.Add(id);
+                continue;
+            }
+
+            // progress represents the distance down the snake of the explosion
+            // We want smaller explosions down the tail, and a big one at the head
+            var head = path.Last();
+            
+            // Calculate total length
+            double totalLength = 0;
+            var lengths = new List<double>();
+            for (int i = 0; i < path.Count - 1; i++)
+            {
+                var dx = path[i + 1].X - path[i].X;
+                var dy = path[i + 1].Y - path[i].Y;
+                var dist = Math.Sqrt(dx * dx + dy * dy);
+                lengths.Add(dist);
+                totalLength += dist;
+            }
+
+            var explodedLength = totalLength * anim.Progress;
+            double currentDist = 0;
+            
+            // Draw head explosion: starts immediately and fades
+            var headAlpha = Math.Max(0, 1.0 - (anim.Progress * 1.5));
+            var headRadius = 20 + anim.Progress * 80;
+            await _context.SetFillStyleAsync($"rgba(255,80,0,{headAlpha:F2})");
+            await _context.BeginPathAsync();
+            await _context.ArcAsync(head.X, head.Y, headRadius, 0, Math.PI * 2);
+            await _context.FillAsync();
+
+            // Draw chain explosions along the body segments backwards
+            // If the explosion "front" has passed a segment, we draw a fading circle there
+            for (int i = path.Count - 1; i > 0; i--)
+            {
+                var segLen = lengths[i - 1];
+                currentDist += segLen;
+                var segProgress = Math.Min(1.0, Math.Max(0.0, (anim.Progress - (totalLength - currentDist) / totalLength) * 2));
+                
+                if (segProgress > 0 && segProgress < 1.0)
+                {
+                    double steps = Math.Ceiling(segLen / 20.0);
+                    for (int j = 0; j <= steps; j++)
+                    {
+                        var t = j / steps;
+                        var bx = path[i].X + (path[i - 1].X - path[i].X) * t;
+                        var by = path[i].Y + (path[i - 1].Y - path[i].Y) * t;
+                        
+                        var bAlpha = Math.Max(0, 1.0 - segProgress);
+                        var bRadius = 5 + segProgress * 30;
+                        await _context.SetFillStyleAsync($"rgba(255,140,0,{bAlpha:F2})");
+                        await _context.BeginPathAsync();
+                        await _context.ArcAsync(bx, by, bRadius, 0, Math.PI * 2);
+                        await _context.FillAsync();
+                    }
+                }
+            }
+
+            anim.Progress += 0.02; // 50 frames to complete
+            if (anim.Progress >= 1.5) // allow fade out
+            {
+                completedAnims.Add(id);
+            }
+        }
+        foreach (var id in completedAnims)
+        {
+            _deathAnimations.Remove(id);
         }
 
         await _context.RestoreAsync();

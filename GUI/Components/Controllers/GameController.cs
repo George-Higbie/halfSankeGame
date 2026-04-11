@@ -62,7 +62,17 @@ namespace GUI.Components.Controllers
 
         public Task ConnectAsync(string host, int port, string name)
         {
+            _snakes.Clear();
+            _walls.Clear();
+            _powerups.Clear();
+            PlayerId = null;
+            WorldSize = null;
             return _network.ConnectAsync(host, port, name);
+        }
+
+        public void Disconnect()
+        {
+            _network.Disconnect();
         }
 
         public Task SendMoveAsync(string moving)
