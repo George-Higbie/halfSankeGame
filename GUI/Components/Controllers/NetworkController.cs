@@ -37,13 +37,14 @@ namespace GUI.Components.Controllers
 
         public async Task ConnectAsync(string host, int port, string playerName, CancellationToken ct = default)
         {
+            Disconnect(); // Ensure previous connection is fully cleaned up before starting a new one
+
             PlayerId = null;
             WorldSize = null;
             _host = host;
             _port = port;
             _playerName = playerName;
 
-            _cts?.Cancel();
             _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
             _client = new TcpClient();
@@ -55,7 +56,7 @@ namespace GUI.Components.Controllers
             // send player name
             await _writer.WriteLineAsync(playerName);
 
-            // start read loop
+            // capture the CTS token explicitly for THIS read loop to prevent cross-connection disposal races
             _ = Task.Run(() => ReadLoopAsync(_cts.Token));
         }
 
@@ -153,9 +154,11 @@ namespace GUI.Components.Controllers
             }
             finally
             {
-                // notify disconnect to allow reconnection logic elsewhere
-                NotifyDisconnected();
-                Dispose();
+                // We only invoke disconnect if we haven't already been explicitly cancelled/disconnected
+                if (!ct.IsCancellationRequested)
+                {
+                    NotifyDisconnected();
+                }
             }
         }
 
@@ -186,10 +189,19 @@ namespace GUI.Components.Controllers
 
         public void Disconnect()
         {
-            try { _cts?.Cancel(); } catch { }
+            if (_cts != null && !_cts.IsCancellationRequested)
+            {
+                try { _cts.Cancel(); } catch { }
+            }
             try { _reader?.Dispose(); } catch { }
             try { _writer?.Dispose(); } catch { }
+            try { _client?.Close(); } catch { }
             try { _client?.Dispose(); } catch { }
+
+            _client = null;
+            _reader = null;
+            _writer = null;
+
             PlayerId = null;
             WorldSize = null;
             NotifyDisconnected();
@@ -197,9 +209,13 @@ namespace GUI.Components.Controllers
 
         public void Dispose()
         {
-            try { _cts?.Cancel(); } catch { }
+            if (_cts != null && !_cts.IsCancellationRequested)
+            {
+                try { _cts.Cancel(); } catch { }
+            }
             try { _reader?.Dispose(); } catch { }
             try { _writer?.Dispose(); } catch { }
+            try { _client?.Close(); } catch { }
             try { _client?.Dispose(); } catch { }
         }
     }

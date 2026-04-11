@@ -31,20 +31,25 @@ namespace GUI.Components.Controllers
             _network.OnWorldSizeReceived += ws => { WorldSize = ws; OnStateUpdated?.Invoke(); };
             _network.OnWallReceived += w => { _walls[w.wall] = w; OnStateUpdated?.Invoke(); };
             _network.OnSnakeReceived += s => { 
-                if (s.dc && _snakes.ContainsKey(s.snake)) {
+                if (s.dc.HasValue && s.dc.Value && _snakes.ContainsKey(s.snake)) {
                     _snakes.TryRemove(s.snake, out _);
                 } else {
                     // Merge fields so we don't nullify body on death packets
                     if (_snakes.TryGetValue(s.snake, out var existing)) {
-                        existing.score = s.score;
-                        existing.died = s.died;
-                        existing.alive = s.alive;
-                        existing.join = s.join;
-                        existing.dc = s.dc;
+                        if (s.score != 0) existing.score = s.score;
+                        if (s.died.HasValue) existing.died = s.died;
+                        if (s.alive.HasValue) existing.alive = s.alive;
+                        if (s.join.HasValue) existing.join = s.join;
+                        if (s.dc.HasValue) existing.dc = s.dc;
                         if (s.name != null) existing.name = s.name;
                         if (s.body != null) existing.body = s.body;
                         if (s.dir != null) existing.dir = s.dir;
                     } else {
+                        // For a new snake, default omitted booleans to false
+                        s.died ??= false;
+                        s.alive ??= false;
+                        s.join ??= false;
+                        s.dc ??= false;
                         _snakes[s.snake] = s; 
                     }
                 }

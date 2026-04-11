@@ -21,16 +21,16 @@ namespace GUI.Components.Models
         public int score { get; set; }
 
         [JsonPropertyName("died")]
-        public bool died { get; set; }
+        public bool? died { get; set; }
 
         [JsonPropertyName("alive")]
-        public bool alive { get; set; }
+        public bool? alive { get; set; }
 
         [JsonPropertyName("dc")]
-        public bool dc { get; set; }
+        public bool? dc { get; set; }
 
         [JsonPropertyName("join")]
-        public bool join { get; set; }
+        public bool? join { get; set; }
 
         public Snake() { }
     }

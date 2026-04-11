@@ -126,7 +126,7 @@
 
         foreach (var s in GameController.GetSnakes())
         {
-            if (s.snake == player.snake || !s.alive || s.body == null || s.body.Count < 2) continue;
+            if (s.snake == player.snake || s.alive != true || s.body == null || s.body.Count < 2) continue;
             for (int i = 0; i < s.body.Count - 1; i++)
             {
                 var bp1 = s.body[i];
@@ -178,7 +178,7 @@
                 var player = GameController.GetPlayerSnake();
                 if (player != null)
                 {
-                    if (player.alive)
+                    if (player.alive == true)
                     {
                         if (_showDeathScreen)
                         {
@@ -203,7 +203,7 @@
                             _spawnVerified = true;
                         }
                     }
-                    else if (player.died && !_showDeathScreen)
+                    else if (player.died == true && !_showDeathScreen)
                     {
                         _showDeathScreen = true;
                         _spawnVerified = false;
@@ -552,12 +552,12 @@
         // draw snakes (smoothed body + head, death animation)
         foreach (var s in GameController.GetSnakes())
         {
-            if (s.dc) continue;
+            if (s.dc == true) continue;
 
             var color = _colors[s.snake % _colors.Length];
 
             // draw death animation if this snake died on the last received frame
-            if (s.died && !_deathAnimations.ContainsKey(s.snake))
+            if (s.died == true && !_deathAnimations.ContainsKey(s.snake))
             {
                 _deathAnimations[s.snake] = new DeathAnim 
                 { 
@@ -567,7 +567,7 @@
                 };
             }
 
-            if (!s.alive || _deathAnimations.ContainsKey(s.snake)) continue;
+            if (s.alive != true || _deathAnimations.ContainsKey(s.snake)) continue;
             if (s.body == null || s.body.Count < 2) continue;
 
             // draw path exactly as the server specifies
