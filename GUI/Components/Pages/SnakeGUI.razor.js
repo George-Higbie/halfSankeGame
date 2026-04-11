@@ -26,6 +26,9 @@ function resizeCanvas() {
     if (!canvasEl) return;
     canvasEl.width = window.innerWidth;
     canvasEl.height = window.innerHeight;
+    if (instance) {
+        instance.invokeMethodAsync('UpdateViewportSize', [window.innerWidth, window.innerHeight]);
+    }
 }
 
 function ensureCanvas() {

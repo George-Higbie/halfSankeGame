@@ -365,7 +365,17 @@
     // ==================== Input ====================
 
     [JSInvokable]
-    public void HandleKeyPress(string key)
+        public void UpdateViewportSize(int[] dims)
+        {
+            if (dims is { Length: 2 } && dims[0] > 0 && dims[1] > 0)
+            {
+                _viewW = dims[0];
+                _viewH = dims[1];
+            }
+        }
+
+        [JSInvokable]
+        public void HandleKeyPress(string key)
     {
         if (_showDeathScreen) return;
 
@@ -443,7 +453,8 @@
     {
         try { _rerollCts?.Cancel(); } catch { }
         _showDeathScreen = false;
-        _spawnSafe = true;
+        // Force spawn validation/reroll to run before rendering the player again.
+        _spawnSafe = false;
         _rerolling = false;
         _pendingMoveCmd = null;
         // Reconnect immediately so the server assigns a fresh alive snake

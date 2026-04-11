@@ -1,0 +1,186 @@
+{
+  "version": 1,
+  "built_at": "2026-04-11T05:50:10.517Z",
+  "entry_count": 1,
+  "idf": {
+    "fixed": 1,
+    "respawn": 1,
+    "safety": 1,
+    "bypass": 1,
+    "snakegui": 1,
+    "longer": 1,
+    "pre": 1,
+    "marks": 1,
+    "spawn": 1,
+    "safe": 1,
+    "success": 1,
+    "requires": 1,
+    "isspawnsafe": 1,
+    "validation": 1,
+    "reroll": 1,
+    "before": 1,
+    "player": 1,
+    "rendered": 1,
+    "changed": 1,
+    "set": 1,
+    "spawnsafe": 1,
+    "false": 1,
+    "instead": 1,
+    "true": 1,
+    "strict": 1,
+    "lint": 1,
+    "file": 1,
+    "diagnostics": 1,
+    "clean": 1,
+    "bugfix": 1,
+    "blazor": 1,
+    "snake": 1
+  },
+  "entries": [
+    {
+      "ts": "2026-04-11T05:50:10.515Z",
+      "session_uri": "vscode-chat-session://local/YWJhOGMwYmEtYjViYS00ODA4LTk5MGMtMDc0ZjUyNzY3NzE2",
+      "model": "gpt-5.3-codex",
+      "tier": "capable",
+      "surprise": 0.3,
+      "tags": [
+        "bugfix",
+        "respawn",
+        "blazor",
+        "snake"
+      ],
+      "norm_vec": {
+        "respawn": 0.6681531047810606,
+        "fixed": 0.13363062095621212,
+        "safety": 0.13363062095621212,
+        "bypass": 0.13363062095621212,
+        "snakegui": 0.13363062095621212,
+        "longer": 0.13363062095621212,
+        "pre": 0.13363062095621212,
+        "marks": 0.13363062095621212,
+        "spawn": 0.13363062095621212,
+        "safe": 0.13363062095621212,
+        "success": 0.13363062095621212,
+        "requires": 0.13363062095621212,
+        "isspawnsafe": 0.13363062095621212,
+        "validation": 0.13363062095621212,
+        "reroll": 0.13363062095621212,
+        "before": 0.13363062095621212,
+        "player": 0.13363062095621212,
+        "rendered": 0.13363062095621212,
+        "changed": 0.13363062095621212,
+        "set": 0.13363062095621212,
+        "spawnsafe": 0.13363062095621212,
+        "false": 0.13363062095621212,
+        "instead": 0.13363062095621212,
+        "true": 0.13363062095621212,
+        "strict": 0.13363062095621212,
+        "lint": 0.13363062095621212,
+        "file": 0.13363062095621212,
+        "diagnostics": 0.13363062095621212,
+        "clean": 0.13363062095621212,
+        "bugfix": 0.13363062095621212,
+        "blazor": 0.13363062095621212,
+        "snake": 0.13363062095621212
+      }
+    }
+  ],
+  "posting": {
+    "respawn": [
+      0
+    ],
+    "fixed": [
+      0
+    ],
+    "safety": [
+      0
+    ],
+    "bypass": [
+      0
+    ],
+    "snakegui": [
+      0
+    ],
+    "longer": [
+      0
+    ],
+    "pre": [
+      0
+    ],
+    "marks": [
+      0
+    ],
+    "spawn": [
+      0
+    ],
+    "safe": [
+      0
+    ],
+    "success": [
+      0
+    ],
+    "requires": [
+      0
+    ],
+    "isspawnsafe": [
+      0
+    ],
+    "validation": [
+      0
+    ],
+    "reroll": [
+      0
+    ],
+    "before": [
+      0
+    ],
+    "player": [
+      0
+    ],
+    "rendered": [
+      0
+    ],
+    "changed": [
+      0
+    ],
+    "set": [
+      0
+    ],
+    "spawnsafe": [
+      0
+    ],
+    "false": [
+      0
+    ],
+    "instead": [
+      0
+    ],
+    "true": [
+      0
+    ],
+    "strict": [
+      0
+    ],
+    "lint": [
+      0
+    ],
+    "file": [
+      0
+    ],
+    "diagnostics": [
+      0
+    ],
+    "clean": [
+      0
+    ],
+    "bugfix": [
+      0
+    ],
+    "blazor": [
+      0
+    ],
+    "snake": [
+      0
+    ]
+  }
+}
