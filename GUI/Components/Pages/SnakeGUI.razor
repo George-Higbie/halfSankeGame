@@ -19,12 +19,21 @@
     <label>Name: <input @bind="PlayerName" /></label>
     <button @onclick="Connect">Connect</button>
     <button @onclick="Reconnect">Reconnect</button>
+    <button @onclick="() => _showSettings = !_showSettings">⚙️ Settings</button>
         <div>Status: @_status</div>
         @if (_reconnectInProgress)
         {
             <div>Retrying... @_reconnectCountdown s</div>
             <button @onclick="(() => _reconnectCts?.Cancel())">Cancel</button>
         }
+        
+    @if (_showSettings)
+    {
+        <div style="margin-top: 8px; border-top: 1px solid #ccc; padding-top: 8px;">
+            <label style="display:block;"><input type="checkbox" @bind="_highQualityTextures" /> High Quality Graphics</label>
+            <label style="display:block;"><input type="checkbox" @bind="_drawGrid" /> Draw Grid Overlay</label>
+        </div>
+    }
 
     <div style="margin-top:8px; max-height:300px; overflow:auto;">
         <strong>Players</strong>
@@ -209,8 +218,6 @@
     }
 
     private readonly string[] _colors = new[] { "red", "green", "blue", "orange", "purple", "brown", "magenta", "teal" };
-    private readonly Dictionary<int, (double X, double Y)> _smoothHeads = new();
-    private readonly Dictionary<int, List<(double X, double Y)>> _smoothBodies = new();
     private readonly Dictionary<int, double> _deathAnimations = new();
 
     // reconnect state
@@ -218,12 +225,26 @@
     private bool _reconnectInProgress = false;
     private int _reconnectCountdown = 0;
 
+    private bool _showSettings = false;
+    private bool _drawGrid = true;
+    private bool _highQualityTextures = true;
+
     private async Task DrawFrame()
     {
         if (_context == null) return;
 
-        // clear
-        await _context.SetFillStyleAsync("#e8f5ff");
+        await _context.BeginBatchAsync();
+
+        // clear based on settings
+        if (_highQualityTextures)
+        {
+            await _context.SetFillStyleAsync("#7c9c45"); // grass green
+        }
+        else
+        {
+            await _context.SetFillStyleAsync("#e8f5ff"); // default blueish
+        }
+        
         await _context.FillRectAsync(0, 0, 1000, 1000);
 
         var worldSize = GameController.WorldSize ?? 1000;
@@ -255,106 +276,193 @@
         await _context.TranslateAsync(500, 500);
         await _context.TranslateAsync(-centerX, -centerY);
 
+        if (_drawGrid && _highQualityTextures)
+        {
+            await _context.SetStrokeStyleAsync("rgba(0,0,0,0.05)");
+            await _context.SetLineWidthAsync(2);
+            await _context.BeginPathAsync();
+            var hw = worldSize / 2;
+            for (int i = -hw; i <= hw; i += 50)
+            {
+                await _context.MoveToAsync(i, -hw);
+                await _context.LineToAsync(i, hw);
+                await _context.MoveToAsync(-hw, i);
+                await _context.LineToAsync(hw, i);
+            }
+            await _context.StrokeAsync();
+        }
+
         // draw walls
         foreach (var w in GameController.GetWalls())
         {
             if (w.p1 == null || w.p2 == null) continue;
-            // draw as a rectangle covering p1->p2 in 50px segments
-            var x = Math.Min(w.p1.X, w.p2.X);
-            var y = Math.Min(w.p1.Y, w.p2.Y);
-            var wdt = Math.Abs(w.p1.X - w.p2.X);
-            var hgt = Math.Abs(w.p1.Y - w.p2.Y);
-            if (wdt == 0) wdt = 50; if (hgt == 0) hgt = 50;
-            await _context.SetFillStyleAsync("#444444");
-            await _context.FillRectAsync(x, y, Math.Max(50, wdt), Math.Max(50, hgt));
+            var x = (double)Math.Min(w.p1.X, w.p2.X);
+            var y = (double)Math.Min(w.p1.Y, w.p2.Y);
+            var wdt = (double)Math.Abs(w.p1.X - w.p2.X);
+            var hgt = (double)Math.Abs(w.p1.Y - w.p2.Y);
+            
+            if (wdt == 0)
+            {
+                x -= 25;
+                y -= 25;
+                wdt = 50;
+                hgt += 50;
+            }
+            else
+            {
+                x -= 25;
+                y -= 25;
+                hgt = 50;
+                wdt += 50;
+            }
+            
+            if (_highQualityTextures)
+            {
+                await _context.SaveAsync();
+                
+                await _context.SetFillStyleAsync("#65696d");
+                await _context.FillRectAsync(x, y, wdt, hgt);
+                
+                // Clip so bricks don't spill out
+                await _context.BeginPathAsync();
+                await _context.RectAsync(x, y, wdt, hgt);
+                await _context.ClipAsync();
+
+                // Draw brick pattern using basic overlapping rectangles 
+                await _context.SetStrokeStyleAsync("#3a3c3f");
+                await _context.SetLineWidthAsync(2);
+                await _context.BeginPathAsync();
+                
+                for (int by = (int)y; by < (int)(y + hgt); by += 25)
+                {
+                    // Alternate row offsets for the brick layout
+                    var offset = (Math.Abs(by) / 25) % 2 == 0 ? 0 : 12;
+                    for (int bx = (int)x - offset - 25; bx < (int)(x + wdt) + 25; bx += 25)
+                    {
+                        await _context.StrokeRectAsync(bx, by, 25, 25);
+                    }
+                }
+                await _context.StrokeAsync();
+                
+                await _context.RestoreAsync(); // restore from clip
+                
+                // Outer border on top
+                await _context.SetStrokeStyleAsync("#2a2c2f");
+                await _context.SetLineWidthAsync(4);
+                await _context.StrokeRectAsync(x, y, wdt, hgt);
+            }
+            else 
+            {
+                await _context.SetFillStyleAsync("#555555");
+                await _context.FillRectAsync(x, y, wdt, hgt);
+                await _context.SetStrokeStyleAsync("#222222");
+                await _context.SetLineWidthAsync(2);
+                await _context.StrokeRectAsync(x, y, wdt, hgt);
+            }
         }
 
         // draw powerups
         foreach (var p in GameController.GetPowerups())
         {
-            if (p.loc == null) continue;
+            if (p.loc == null || p.died) continue;
+            var pulse = _highQualityTextures ? Math.Abs(Math.Sin(DateTime.Now.TimeOfDay.TotalSeconds * 5)) * 3 : 0;
+            
             await _context.SetFillStyleAsync("gold");
             await _context.BeginPathAsync();
-            await _context.ArcAsync(p.loc.X, p.loc.Y, 8, 0, Math.PI * 2);
+            await _context.ArcAsync(p.loc.X, p.loc.Y, 8 + pulse, 0, Math.PI * 2);
             await _context.FillAsync();
+
+            if (_highQualityTextures)
+            {
+                await _context.SetFillStyleAsync("yellow");
+                await _context.BeginPathAsync();
+                await _context.ArcAsync(p.loc.X, p.loc.Y, 4, 0, Math.PI * 2);
+                await _context.FillAsync();
+            }
         }
 
-            // draw snakes (smoothed body + head, death animation)
+        // draw snakes (smoothed body + head, death animation)
         foreach (var s in GameController.GetSnakes())
         {
-            if (s.body == null || s.body.Count < 2) continue;
-            var color = _colors[s.snake % _colors.Length];
-
-            // prepare smoothed body positions
-            if (!_smoothBodies.TryGetValue(s.snake, out var smoothList) || smoothList.Count != s.body.Count)
-            {
-                smoothList = s.body.Select(pt => ((double)pt.X, (double)pt.Y)).ToList();
-                _smoothBodies[s.snake] = smoothList;
-            }
-
-            // update smoothing per-vertex
-            for (int i = 0; i < s.body.Count; i++)
-            {
-                var cur = s.body[i];
-                var prev = smoothList[i];
-                var nxv = prev.X + (cur.X - prev.X) * 0.2;
-                var nyv = prev.Y + (cur.Y - prev.Y) * 0.2;
-                smoothList[i] = (nxv, nyv);
-            }
-
-            // draw path using smoothed positions
-            await _context.SetStrokeStyleAsync(color);
-            await _context.SetLineWidthAsync(10);
-            await _context.BeginPathAsync();
-            var sf = smoothList[0];
-            await _context.MoveToAsync(sf.X, sf.Y);
-            for (int i = 1; i < smoothList.Count; i++)
-            {
-                var pt = smoothList[i];
-                await _context.LineToAsync(pt.X, pt.Y);
-            }
-            await _context.StrokeAsync();
-
-            // draw head (smoothed)
-            var headSm = smoothList[smoothList.Count - 1];
+            if (s.dc) continue;
 
             // draw death animation if this snake died on the last received frame
             if (s.died)
             {
                 _deathAnimations[s.snake] = 0.0;
             }
+
             if (_deathAnimations.TryGetValue(s.snake, out var prog))
             {
                 // draw expanding circle
                 var radius = 10 + prog * 60;
-                var alpha = 1.0 - prog;
+                var alpha = Math.Max(0, 1.0 - prog);
                 await _context.SetFillStyleAsync($"rgba(255,80,0,{alpha:F2})");
+                
+                var explX = s.body != null && s.body.Count > 0 ? s.body.Last().X : 0.0;
+                var explY = s.body != null && s.body.Count > 0 ? s.body.Last().Y : 0.0;
+
                 await _context.BeginPathAsync();
-                await _context.ArcAsync(headSm.X, headSm.Y, radius, 0, Math.PI * 2);
+                await _context.ArcAsync(explX, explY, radius, 0, Math.PI * 2);
                 await _context.FillAsync();
-                prog += 0.03; // advance animation
+                
+                prog += 0.05; // advance animation
                 if (prog >= 1.0) _deathAnimations.Remove(s.snake);
                 else _deathAnimations[s.snake] = prog;
             }
 
+            if (!s.alive) continue;
+            if (s.body == null || s.body.Count < 2) continue;
+
+            var color = _colors[s.snake % _colors.Length];
+
+            // draw path exactly as the server specifies
+            await _context.SetStrokeStyleAsync(color);
+            await _context.SetLineWidthAsync(10);
+            await _context.SetLineCapAsync(LineCap.Round);
+            await _context.SetLineJoinAsync(LineJoin.Round);
+            await _context.BeginPathAsync();
+            var sf = s.body[0];
+            await _context.MoveToAsync(sf.X, sf.Y);
+            for (int i = 1; i < s.body.Count; i++)
+            {
+                var pt = s.body[i];
+                await _context.LineToAsync(pt.X, pt.Y);
+            }
+            await _context.StrokeAsync();
+
+            // draw head
+            var head = s.body.Last();
+            
+            // optionally draw snake eyes if high quality
+            if (_highQualityTextures)
+            {
+                await _context.SetFillStyleAsync("black");
+                await _context.BeginPathAsync();
+                await _context.ArcAsync(head.X, head.Y, 9, 0, Math.PI * 2);
+                await _context.FillAsync();
+            }
+
             await _context.SetFillStyleAsync("white");
             await _context.BeginPathAsync();
-            await _context.ArcAsync(headSm.X, headSm.Y, 8, 0, Math.PI * 2);
+            await _context.ArcAsync(head.X, head.Y, 8, 0, Math.PI * 2);
             await _context.FillAsync();
             await _context.SetFillStyleAsync(color);
             await _context.BeginPathAsync();
-            await _context.ArcAsync(headSm.X, headSm.Y, 6, 0, Math.PI * 2);
+            await _context.ArcAsync(head.X, head.Y, 6, 0, Math.PI * 2);
             await _context.FillAsync();
 
             if (!string.IsNullOrEmpty(s.name))
             {
-                await _context.SetFillStyleAsync("black");
-                await _context.SetFontAsync("12px sans-serif");
-                await _context.FillTextAsync(s.name + " (" + s.score + ")", headSm.X + 10, headSm.Y - 10);
+                await _context.SetFillStyleAsync("white");
+                await _context.SetFontAsync("bold 14px Arial");
+                await _context.FillTextAsync($"{s.name}: {s.score}", head.X + 12, head.Y - 12);
             }
         }
 
         await _context.RestoreAsync();
+        
+        await _context.EndBatchAsync();
     }
 
 }

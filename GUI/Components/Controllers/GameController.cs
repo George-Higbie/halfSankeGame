@@ -30,8 +30,22 @@ namespace GUI.Components.Controllers
             _network.OnPlayerIdReceived += id => { PlayerId = id; OnStateUpdated?.Invoke(); };
             _network.OnWorldSizeReceived += ws => { WorldSize = ws; OnStateUpdated?.Invoke(); };
             _network.OnWallReceived += w => { _walls[w.wall] = w; OnStateUpdated?.Invoke(); };
-            _network.OnSnakeReceived += s => { _snakes[s.snake] = s; OnStateUpdated?.Invoke(); };
-            _network.OnPowerupReceived += p => { _powerups[p.power] = p; OnStateUpdated?.Invoke(); };
+            _network.OnSnakeReceived += s => { 
+                if (s.dc && _snakes.ContainsKey(s.snake)) {
+                    _snakes.TryRemove(s.snake, out _);
+                } else {
+                    _snakes[s.snake] = s; 
+                }
+                OnStateUpdated?.Invoke(); 
+            };
+            _network.OnPowerupReceived += p => { 
+                if (p.died && _powerups.ContainsKey(p.power)) {
+                    _powerups.TryRemove(p.power, out _);
+                } else {
+                    _powerups[p.power] = p; 
+                }
+                OnStateUpdated?.Invoke(); 
+            };
             _network.OnDisconnected += () => { OnStateUpdated?.Invoke(); };
         }
 
