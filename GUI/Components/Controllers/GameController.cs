@@ -34,7 +34,19 @@ namespace GUI.Components.Controllers
                 if (s.dc && _snakes.ContainsKey(s.snake)) {
                     _snakes.TryRemove(s.snake, out _);
                 } else {
-                    _snakes[s.snake] = s; 
+                    // Merge fields so we don't nullify body on death packets
+                    if (_snakes.TryGetValue(s.snake, out var existing)) {
+                        existing.score = s.score;
+                        existing.died = s.died;
+                        existing.alive = s.alive;
+                        existing.join = s.join;
+                        existing.dc = s.dc;
+                        if (s.name != null) existing.name = s.name;
+                        if (s.body != null) existing.body = s.body;
+                        if (s.dir != null) existing.dir = s.dir;
+                    } else {
+                        _snakes[s.snake] = s; 
+                    }
                 }
                 OnStateUpdated?.Invoke(); 
             };

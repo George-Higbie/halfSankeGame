@@ -189,8 +189,15 @@
                         {
                             if (!IsSpawnSafe(player))
                             {
-                                GameController.Disconnect();
-                                await Reconnect();
+                                // Disconnect and quickly reroll connection silently so the UI doesn't visually glitch out
+                                _ = Task.Run(async () => {
+                                    var safeHost = Host;
+                                    var safePort = Port;
+                                    var safeName = PlayerName;
+                                    GameController.Disconnect();
+                                    await Task.Delay(50);
+                                    await GameController.ConnectAsync(safeHost, safePort, safeName);
+                                });
                                 return;
                             }
                             _spawnVerified = true;
@@ -670,7 +677,7 @@
                     }
                     else // Explosion splits this segment
                     {
-                        var t = (segDistEnd - explodedLength) / segLen;
+                        var t = segLen > 0.001 ? (segDistEnd - explodedLength) / segLen : 0;
                         var endX = path[i].X + (path[i+1].X - path[i].X) * t;
                         var endY = path[i].Y + (path[i+1].Y - path[i].Y) * t;
                         await _context.LineToAsync(endX, endY);
