@@ -100,17 +100,34 @@
     private bool IsSpawnSafe(Snake player)
     {
         if (player.body == null || player.body.Count < 2 || player.dir == null) return false;
+        
         var head = player.body.Last();
         var headX = (double)head.X;
         var headY = (double)head.Y;
         var dirX = (double)player.dir.X;
         var dirY = (double)player.dir.Y;
         
-        // Ray length 500 units (10 tiles)
+        // Ray length 500 units (10 tiles) forward from head
         double rayX1 = headX;
         double rayY1 = headY;
-        double rayX2 = headX + dirX * 500;
-        double rayY2 = headY + dirY * 500;
+        double rayX2 = headX + (dirX * 500);
+        double rayY2 = headY + (dirY * 500);
+
+        // Also ray from tail backwards? The user says "same 10 tile rule applies so newly spawning snakes don't unfairly spawn infront of someone playing" -> this means we should check if ANOTHER snake's head is directly pointing at our body!
+        // But simply checking if any part of our snake overlaps with any part of another snake:
+        // Let's create bounding boxes for our own snake segments
+        var mySegments = new List<(double x1, double y1, double x2, double y2)>();
+        for (int i = 0; i < player.body.Count - 1; i++)
+        {
+            var bp1 = player.body[i];
+            var bp2 = player.body[i+1];
+            mySegments.Add((
+                Math.Min(bp1.X, bp2.X) - 10,
+                Math.Min(bp1.Y, bp2.Y) - 10,
+                Math.Max(bp1.X, bp2.X) + 10,
+                Math.Max(bp1.Y, bp2.Y) + 10
+            ));
+        }
 
         foreach (var w in GameController.GetWalls())
         {
@@ -120,13 +137,25 @@
             double ry1 = Math.Min(w.p1.Y, w.p2.Y) - 25;
             double ry2 = Math.Max(w.p1.Y, w.p2.Y) + 25;
             
-            if (headX >= rx1 && headX <= rx2 && headY >= ry1 && headY <= ry2) return false;
+            // If any part of my body is in the wall
+            foreach (var (mx1, my1, mx2, my2) in mySegments)
+            {
+                if (RectsIntersect(mx1, my1, mx2, my2, rx1, ry1, rx2, ry2)) return false;
+            }
+            // If I am looking at a wall within 500 units
             if (LineIntersectsRect(rayX1, rayY1, rayX2, rayY2, rx1, ry1, rx2, ry2)) return false;
         }
 
         foreach (var s in GameController.GetSnakes())
         {
             if (s.snake == player.snake || s.alive != true || s.body == null || s.body.Count < 2) continue;
+            
+            var otherHead = s.body.Last();
+            var otherDirX = (double)(s.dir?.X ?? 0);
+            var otherDirY = (double)(s.dir?.Y ?? 0);
+            double otherRayX2 = otherHead.X + (otherDirX * 500);
+            double otherRayY2 = otherHead.Y + (otherDirY * 500);
+
             for (int i = 0; i < s.body.Count - 1; i++)
             {
                 var bp1 = s.body[i];
@@ -136,12 +165,25 @@
                 double ry1 = Math.Min(bp1.Y, bp2.Y) - 10;
                 double ry2 = Math.Max(bp1.Y, bp2.Y) + 10;
                 
-                if (headX >= rx1 && headX <= rx2 && headY >= ry1 && headY <= ry2) return false;
+                // If any part of my body intersects any part of another snake
+                foreach (var (mx1, my1, mx2, my2) in mySegments)
+                {
+                    if (RectsIntersect(mx1, my1, mx2, my2, rx1, ry1, rx2, ry2)) return false;
+                    // If the other snake's forward ray intersects my spawn body, it's unsafe for them (and me)
+                    if (LineIntersectsRect(otherHead.X, otherHead.Y, otherRayX2, otherRayY2, mx1, my1, mx2, my2)) return false;
+                }
+
+                // If my forward ray intersects their body
                 if (LineIntersectsRect(rayX1, rayY1, rayX2, rayY2, rx1, ry1, rx2, ry2)) return false;
             }
         }
         
         return true;
+    }
+
+    private bool RectsIntersect(double ax1, double ay1, double ax2, double ay2, double bx1, double by1, double bx2, double by2)
+    {
+        return ax1 <= bx2 && ax2 >= bx1 && ay1 <= by2 && ay2 >= by1;
     }
 
     private bool LineIntersectsRect(double p1x, double p1y, double p2x, double p2y, double rx1, double ry1, double rx2, double ry2)
@@ -187,6 +229,12 @@
                         
                         if (!_spawnVerified)
                         {
+                            if (player.body == null || player.body.Count < 2 || player.dir == null)
+                            {
+                                // Wait until we actually receive the snake's body and direction
+                                return;
+                            }
+
                             if (!IsSpawnSafe(player))
                             {
                                 // Disconnect and quickly reroll connection silently so the UI doesn't visually glitch out
