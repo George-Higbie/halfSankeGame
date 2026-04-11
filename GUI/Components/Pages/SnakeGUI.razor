@@ -96,6 +96,7 @@
     private bool _showDeathScreen = false;
 
     private bool _spawnVerified = false;
+    private int _spawnRerollCount = 0;
 
     private bool IsSpawnSafe(Snake player)
     {
@@ -142,8 +143,6 @@
             {
                 if (RectsIntersect(mx1, my1, mx2, my2, rx1, ry1, rx2, ry2)) return false;
             }
-            // If I am looking at a wall within 500 units
-            if (LineIntersectsRect(rayX1, rayY1, rayX2, rayY2, rx1, ry1, rx2, ry2)) return false;
         }
 
         foreach (var s in GameController.GetSnakes())
@@ -237,18 +236,27 @@
 
                             if (!IsSpawnSafe(player))
                             {
-                                // Disconnect and quickly reroll connection silently so the UI doesn't visually glitch out
-                                _ = Task.Run(async () => {
-                                    var safeHost = Host;
-                                    var safePort = Port;
-                                    var safeName = PlayerName;
-                                    GameController.Disconnect();
-                                    await Task.Delay(50);
-                                    await GameController.ConnectAsync(safeHost, safePort, safeName);
-                                });
-                                return;
+                                if (_spawnRerollCount < 3)
+                                {
+                                    _spawnRerollCount++;
+                                    // Disconnect and quickly reroll connection silently so the UI doesn't visually glitch out
+                                    _ = Task.Run(async () => {
+                                        var safeHost = Host;
+                                        var safePort = Port;
+                                        var safeName = PlayerName;
+                                        GameController.Disconnect();
+                                        await Task.Delay(50);
+                                        await GameController.ConnectAsync(safeHost, safePort, safeName);
+                                    });
+                                    return;
+                                }
+                                else 
+                                {
+                                    // Give up after 3 rerolls so we don't memory leak or infinitely spin the server
+                                }
                             }
                             _spawnVerified = true;
+                            _spawnRerollCount = 0;
                         }
                     }
                     else if (player.died == true && !_showDeathScreen)
@@ -299,12 +307,15 @@
     {
         _showDeathScreen = false;
         _spawnVerified = false;
+        _spawnRerollCount = 0;
         _ = Reconnect();
     }
 
     private async Task Connect()
     {
         _showDeathScreen = false;
+        _spawnVerified = false;
+        _spawnRerollCount = 0;
         // single-shot connect (no retries)
         try
         {
