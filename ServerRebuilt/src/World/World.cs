@@ -694,14 +694,15 @@ public class World
 
 	public Vector2D RandomLocation(float padding)
 	{
-		const int maxAttempts = 500;
-		for (int attempt = 0; attempt < maxAttempts; attempt++)
+		Vector2D vector2D;
+		bool flag;
+		do
 		{
 			float num = (float)rand.NextDouble() * 2f - 1f;
 			float num2 = (float)rand.NextDouble() * 2f - 1f;
-			Vector2D vector2D = new Vector2D(num, num2);
+			vector2D = new Vector2D(num, num2);
 			vector2D *= (double)(Size / 2);
-			bool flag = true;
+			flag = true;
 			foreach (Wall value in Walls.Values)
 			{
 				if (value.Intersects(vector2D, 50f + padding))
@@ -731,104 +732,54 @@ public class World
 					if (!flag) break;
 				}
 			}
-			if (flag) return vector2D;
 		}
-		// Fallback: return a random position ignoring snake proximity
-		Vector2D fallback;
-		do
-		{
-			float fx = (float)rand.NextDouble() * 2f - 1f;
-			float fy = (float)rand.NextDouble() * 2f - 1f;
-			fallback = new Vector2D(fx, fy);
-			fallback *= (double)(Size / 2);
-			bool wallClear = true;
-			foreach (Wall value in Walls.Values)
-			{
-				if (value.Intersects(fallback, 50f + padding))
-				{
-					wallClear = false;
-					break;
-				}
-			}
-			if (wallClear) return fallback;
-		}
-		while (true);
+		while (!flag);
+		return vector2D;
 	}
 
 	private (Vector2D tail, Vector2D head) RandomSnakeSpawn()
 	{
-		const double aheadClearance = 300.0;
-		const double step = 30.0;
-		const double bodyBuffer = 50.0;
-		const double headDangerZone = 300.0;
-		const double corridorWidth = 50.0;
-		const int maxAttempts = 500;
+		const double clearance = 300.0;
+		const int maxAttempts = 200;
 		for (int attempt = 0; attempt < maxAttempts; attempt++)
 		{
 			Vector2D t = RandomLocation(120f);
 			Vector2D h = RandomSnakeDirection(t);
 			Vector2D dir = h - t;
 			dir.Normalize();
+			Vector2D checkPoint = h + dir * clearance;
 
 			bool clear = true;
-
-			// 1) 150 units clear ahead of spawn (walls only)
-			for (double d = 0; d <= aheadClearance && clear; d += step)
+			foreach (Wall wall in Walls.Values)
 			{
-				Vector2D checkPoint = h + dir * d;
-				foreach (Wall wall in Walls.Values)
+				if (wall.Intersects(checkPoint, 50.0))
 				{
-					if (wall.Intersects(checkPoint, 50.0))
-					{
-						clear = false;
-						break;
-					}
+					clear = false;
+					break;
 				}
 			}
-			if (!clear) continue;
-
-			// 2) No overlap with existing snake bodies at spawn location
-			foreach (Snake s in Snakes.Values)
+			if (clear)
 			{
-				if (!s.Alive) continue;
-				foreach (var (v1, v2) in s.Segments())
+				foreach (Snake s in Snakes.Values)
 				{
-					double segMinX = Math.Min(v1.X_f, v2.X_f) - bodyBuffer;
-					double segMaxX = Math.Max(v1.X_f, v2.X_f) + bodyBuffer;
-					double segMinY = Math.Min(v1.Y_f, v2.Y_f) - bodyBuffer;
-					double segMaxY = Math.Max(v1.Y_f, v2.Y_f) + bodyBuffer;
-					if (h.X_f >= segMinX && h.X_f <= segMaxX &&
-					    h.Y_f >= segMinY && h.Y_f <= segMaxY)
+					if (!s.Alive) continue;
+					foreach (var (v1, v2) in s.Segments())
 					{
-						clear = false;
-						break;
+						double segMinX = Math.Min(v1.X_f, v2.X_f) - 30.0;
+						double segMaxX = Math.Max(v1.X_f, v2.X_f) + 30.0;
+						double segMinY = Math.Min(v1.Y_f, v2.Y_f) - 30.0;
+						double segMaxY = Math.Max(v1.Y_f, v2.Y_f) + 30.0;
+						if (checkPoint.X_f >= segMinX && checkPoint.X_f <= segMaxX &&
+						    checkPoint.Y_f >= segMinY && checkPoint.Y_f <= segMaxY)
+						{
+							clear = false;
+							break;
+						}
 					}
-				}
-				if (!clear) break;
-			}
-			if (!clear) continue;
-
-			// 3) Not within 150 units ahead of any other alive snake's head
-			foreach (Snake s in Snakes.Values)
-			{
-				if (!s.Alive) continue;
-				Vector2D sDir = s.direction;
-				if (sDir == null) continue;
-				Vector2D toSpawn = h - s.Head;
-				double dot = toSpawn.X_f * sDir.X_f + toSpawn.Y_f * sDir.Y_f;
-				if (dot > 0 && dot <= headDangerZone)
-				{
-					double cross = Math.Abs(toSpawn.X_f * sDir.Y_f - toSpawn.Y_f * sDir.X_f);
-					if (cross < corridorWidth)
-					{
-						clear = false;
-						break;
-					}
+					if (!clear) break;
 				}
 			}
-			if (!clear) continue;
-
-			return (t, h);
+			if (clear) return (t, h);
 		}
 		// Fallback: best-effort spawn if no perfect spot found
 		Vector2D fallbackT = RandomLocation(120f);
@@ -837,28 +788,19 @@ public class World
 
 	public void ProcessCommand(Snake s, string cmd)
 	{
-		JsonSerializerSettings val = new JsonSerializerSettings();
-		val.MissingMemberHandling = (MissingMemberHandling)0;
-		ControlCommand controlCommand;
-		try
-		{
-			controlCommand = JsonConvert.DeserializeObject<ControlCommand>(cmd, val);
-		}
-		catch (Exception)
-		{
-			return;
-		}
-		if (controlCommand.moving == "respawn")
-		{
-			if (!s.Alive && !s.name.Contains("spectate"))
-			{
-				var (t, h) = RandomSnakeSpawn();
-				s.Respawn(t, h);
-			}
-			return;
-		}
 		if (s.Alive)
 		{
+			JsonSerializerSettings val = new JsonSerializerSettings();
+			val.MissingMemberHandling = (MissingMemberHandling)1;
+			ControlCommand controlCommand;
+			try
+			{
+				controlCommand = JsonConvert.DeserializeObject<ControlCommand>(cmd, val);
+			}
+			catch (Exception)
+			{
+				return;
+			}
 			s.ChangeDirection(controlCommand.moving, this);
 		}
 	}
@@ -882,6 +824,11 @@ public class World
 		{
 			if (!value.Alive)
 			{
+				if (time - value.GetLastDeath() >= respawnRate && !value.name.Contains("spectate"))
+				{
+					var (t, h) = RandomSnakeSpawn();
+					value.Respawn(t, h);
+				}
 				continue;
 			}
 			value.Update(time, Size);

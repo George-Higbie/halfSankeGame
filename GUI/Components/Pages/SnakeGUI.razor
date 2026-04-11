@@ -787,14 +787,9 @@
 
     private async Task DrawDeathAnimations(double elapsed, Dictionary<int, DeathAnim> deathAnims)
     {
-        var finished = new List<int>();
         foreach (var (id, anim) in deathAnims)
         {
-            if (anim.IsFinished)
-            {
-                finished.Add(id);
-                continue;
-            }
+            if (anim.IsFinished) continue;
 
             var path = anim.Path;
             if (path == null || path.Count < 2) { anim.IsFinished = true; continue; }
@@ -880,8 +875,6 @@
             if (anim.ElapsedSeconds > totalLength / explosionSpeed + 1.0)
                 anim.IsFinished = true;
         }
-        foreach (var id in finished)
-            deathAnims.Remove(id);
     }
 
     private async Task DrawWalls(GameController gc)
@@ -1072,7 +1065,7 @@
                     Color = _colors[s.Id % _colors.Length]
                 };
             }
-            else if (s.Alive == true && deathAnims.TryGetValue(s.Id, out var da) && da.IsFinished)
+            else if (s.Alive == true && deathAnims.ContainsKey(s.Id))
             {
                 deathAnims.Remove(s.Id);
             }
