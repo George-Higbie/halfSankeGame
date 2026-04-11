@@ -809,19 +809,28 @@ public class World
 
 	public void ProcessCommand(Snake s, string cmd)
 	{
+		JsonSerializerSettings val = new JsonSerializerSettings();
+		val.MissingMemberHandling = (MissingMemberHandling)0;
+		ControlCommand controlCommand;
+		try
+		{
+			controlCommand = JsonConvert.DeserializeObject<ControlCommand>(cmd, val);
+		}
+		catch (Exception)
+		{
+			return;
+		}
+		if (controlCommand.moving == "respawn")
+		{
+			if (!s.Alive && !s.name.Contains("spectate"))
+			{
+				var (t, h) = RandomSnakeSpawn();
+				s.Respawn(t, h);
+			}
+			return;
+		}
 		if (s.Alive)
 		{
-			JsonSerializerSettings val = new JsonSerializerSettings();
-			val.MissingMemberHandling = (MissingMemberHandling)1;
-			ControlCommand controlCommand;
-			try
-			{
-				controlCommand = JsonConvert.DeserializeObject<ControlCommand>(cmd, val);
-			}
-			catch (Exception)
-			{
-				return;
-			}
 			s.ChangeDirection(controlCommand.moving, this);
 		}
 	}
@@ -845,11 +854,6 @@ public class World
 		{
 			if (!value.Alive)
 			{
-				if (time - value.GetLastDeath() >= respawnRate && !value.name.Contains("spectate"))
-				{
-					var (t, h) = RandomSnakeSpawn();
-					value.Respawn(t, h);
-				}
 				continue;
 			}
 			value.Update(time, Size);

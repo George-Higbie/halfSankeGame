@@ -551,6 +551,7 @@
     {
         _showDeathScreen = false;
         _p1PendingMove = null;
+        _ = GameController.SendMoveAsync("respawn");
         _ = InvokeAsync(StateHasChanged);
     }
 
@@ -558,6 +559,7 @@
     {
         _p2ShowDeath = false;
         _p2PendingMove = null;
+        if (_p2Game != null) _ = _p2Game.SendMoveAsync("respawn");
         _ = InvokeAsync(StateHasChanged);
     }
 
