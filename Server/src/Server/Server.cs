@@ -170,12 +170,16 @@ public class Server
 	{
 		if (watch.IsRunning)
 		{
-			long target = msPerFrame;
-			while (watch.ElapsedMilliseconds < target - 2)
+			// Use tick-precise timing: 16ms integer would give ~62.5fps,
+			// so compute exact tick target from the desired ms interval
+			double exactMs = msPerFrame < 17 ? 1000.0 / 60.0 : msPerFrame;
+			long targetTicks = (long)(exactMs * Stopwatch.Frequency / 1000.0);
+			long sleepThreshold = 2 * Stopwatch.Frequency / 1000;
+			while (watch.ElapsedTicks < targetTicks - sleepThreshold)
 			{
 				Thread.Sleep(1);
 			}
-			while (watch.ElapsedMilliseconds < target)
+			while (watch.ElapsedTicks < targetTicks)
 			{
 				Thread.SpinWait(100);
 			}

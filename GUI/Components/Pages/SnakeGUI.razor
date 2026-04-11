@@ -347,6 +347,7 @@
     private string? _p1PendingMove;
     private int? _centerTargetSnakeId;
     private volatile bool _p1Ready;
+    private readonly CameraState _p1Cam = new();
 
     // P2 per-player state (manually created controllers)
     private NetworkController? _p2Network;
@@ -357,6 +358,7 @@
     private int _p2FrozenCamY;
     private string? _p2PendingMove;
     private volatile bool _p2Ready;
+    private readonly CameraState _p2Cam = new();
 
     // Wall cache keyed by controller (walls are static per connection)
     private readonly Dictionary<GameController, HashSet<(int cx, int cy)>> _wallCaches = new();
@@ -386,6 +388,13 @@
         public IReadOnlyList<Point2D> Path { get; set; } = Array.Empty<Point2D>();
         public string Color { get; set; } = "orange";
         public bool IsFinished { get; set; }
+    }
+
+    private class CameraState
+    {
+        public double X, Y;
+        public bool Initialized;
+        public void Reset() { X = 0; Y = 0; Initialized = false; }
     }
 
     // ==================== Lifecycle ====================
@@ -507,6 +516,7 @@
         _showDeathScreen = false;
         _p1PendingMove = null;
         _p1Ready = false;
+        _p1Cam.Reset();
         if (closeSidebar) _sidebarOpen = false;
         _wallCaches.Remove(GameController);
         GameController.Disconnect();
@@ -533,6 +543,7 @@
         _p2ShowDeath = false;
         _p2PendingMove = null;
         _p2Ready = false;
+        _p2Cam.Reset();
         _wallCaches.Remove(_p2Game);
         _sidebarOpen = false;
         _p2Game.Disconnect();
@@ -677,12 +688,12 @@
             // Left viewport — P1 (WASD)
             await DrawViewport(GameController, _p1DeathAnims, _showDeathScreen,
                 _frozenCameraX, _frozenCameraY, _centerTargetSnakeId,
-                0, 0, halfW, _viewH, elapsed);
+                0, 0, halfW, _viewH, elapsed, _p1Cam);
 
             // Right viewport — P2 (Arrows)
             await DrawViewport(_p2Game, _p2DeathAnims, _p2ShowDeath,
                 _p2FrozenCamX, _p2FrozenCamY, null,
-                halfW, 0, halfW, _viewH, elapsed);
+                halfW, 0, halfW, _viewH, elapsed, _p2Cam);
 
             // Divider line
             await _context.SetStrokeStyleAsync("rgba(255,255,255,0.4)");
@@ -709,7 +720,7 @@
 
             await DrawViewport(GameController, _p1DeathAnims, _showDeathScreen,
                 _frozenCameraX, _frozenCameraY, _centerTargetSnakeId,
-                0, 0, _viewW, _viewH, elapsed);
+                0, 0, _viewW, _viewH, elapsed, _p1Cam);
         }
 
         await _context.EndBatchAsync();
@@ -718,7 +729,7 @@
     private async Task DrawViewport(
         GameController gc, Dictionary<int, DeathAnim> deathAnims,
         bool showDeath, int frozenCamX, int frozenCamY, int? centerTargetId,
-        int vx, int vy, int vw, int vh, double elapsed)
+        int vx, int vy, int vw, int vh, double elapsed, CameraState cam)
     {
         var worldSize = gc.WorldSize ?? 2000;
 
@@ -727,13 +738,13 @@
             centerSnake = gc.GetSnakes().FirstOrDefault(s => s.Id == centerTargetId.Value);
         centerSnake ??= gc.GetPlayerSnake();
 
-        int centerX = 0, centerY = 0;
-        if (showDeath) { centerX = frozenCamX; centerY = frozenCamY; }
+        double targetCamX = 0, targetCamY = 0;
+        if (showDeath) { targetCamX = frozenCamX; targetCamY = frozenCamY; }
         else if (centerSnake?.Body?.Count > 0)
         {
             var head = centerSnake.Body[^1];
-            centerX = head.X;
-            centerY = head.Y;
+            targetCamX = head.X;
+            targetCamY = head.Y;
         }
 
         var halfWorld = worldSize / 2;
@@ -741,18 +752,27 @@
         var maxCx = halfWorld - vw / 2;
         var minCy = -halfWorld + vh / 2;
         var maxCy = halfWorld - vh / 2;
-        if (minCx < maxCx) centerX = Math.Clamp(centerX, minCx, maxCx);
-        else centerX = 0;
-        if (minCy < maxCy) centerY = Math.Clamp(centerY, minCy, maxCy);
-        else centerY = 0;
+        if (minCx < maxCx) targetCamX = Math.Clamp(targetCamX, minCx, maxCx);
+        else targetCamX = 0;
+        if (minCy < maxCy) targetCamY = Math.Clamp(targetCamY, minCy, maxCy);
+        else targetCamY = 0;
+
+        // Smooth camera lerp
+        if (!cam.Initialized) { cam.X = targetCamX; cam.Y = targetCamY; cam.Initialized = true; }
+        else
+        {
+            double lerpFactor = Math.Min(1.0, elapsed * 18.0);
+            cam.X += (targetCamX - cam.X) * lerpFactor;
+            cam.Y += (targetCamY - cam.Y) * lerpFactor;
+        }
 
         await _context!.SaveAsync();
         await _context.BeginPathAsync();
         await _context.RectAsync(vx, vy, vw, vh);
         await _context.ClipAsync();
 
-        var camX = vx + vw / 2.0 - centerX;
-        var camY = vy + vh / 2.0 - centerY;
+        var camX = vx + vw / 2.0 - cam.X;
+        var camY = vy + vh / 2.0 - cam.Y;
         await _context.TranslateAsync(camX, camY);
 
         if (_drawGrid && _highQualityTextures)
@@ -768,7 +788,7 @@
         {
             await _context.SetFillStyleAsync("rgba(255,68,68,0.7)");
             await _context.SetFontAsync("bold 48px Arial");
-            await _context.FillTextAsync("GAME OVER", centerX - 140, centerY);
+            await _context.FillTextAsync("GAME OVER", (int)cam.X - 140, (int)cam.Y);
         }
 
         await _context.RestoreAsync();
