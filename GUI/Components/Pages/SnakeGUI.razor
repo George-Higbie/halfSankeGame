@@ -345,7 +345,24 @@
             await _context.StrokeAsync();
         }
 
-        // draw walls
+        // draw walls background/borders (Pass 1)
+        await _context.SetFillStyleAsync(_highQualityTextures ? "#2a2c2f" : "#222222");
+        foreach (var w in GameController.GetWalls())
+        {
+            if (w.p1 == null || w.p2 == null) continue;
+            var x = (double)Math.Min(w.p1.X, w.p2.X) - 25;
+            var y = (double)Math.Min(w.p1.Y, w.p2.Y) - 25;
+            var wdt = (double)Math.Abs(w.p1.X - w.p2.X);
+            var hgt = (double)Math.Abs(w.p1.Y - w.p2.Y);
+            
+            if (wdt == 0) { wdt = 50; hgt += 50; }
+            else { hgt = 50; wdt += 50; }
+            
+            // Draw slightly larger rect to act as a border under the main fills
+            await _context.FillRectAsync(x - 2, y - 2, wdt + 4, hgt + 4);
+        }
+
+        // draw walls interior (Pass 2)
         foreach (var w in GameController.GetWalls())
         {
             if (w.p1 == null || w.p2 == null) continue;
@@ -411,9 +428,6 @@
             {
                 await _context.SetFillStyleAsync("#555555");
                 await _context.FillRectAsync(x, y, wdt, hgt);
-                await _context.SetStrokeStyleAsync("#222222");
-                await _context.SetLineWidthAsync(2);
-                await _context.StrokeRectAsync(x, y, wdt, hgt);
             }
         }
 
