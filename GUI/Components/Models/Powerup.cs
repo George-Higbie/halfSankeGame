@@ -2,18 +2,19 @@ using System.Text.Json.Serialization;
 
 namespace GUI.Components.Models
 {
+    /// <summary>
+    /// Represents a collectible powerup at a location in the game world.
+    /// </summary>
     public class Powerup
     {
         [JsonPropertyName("power")]
-        public int power { get; set; }
+        public int Id { get; set; }
 
         [JsonPropertyName("loc")]
-        public Point2D? loc { get; set; }
+        public Point2D? Location { get; set; }
 
         [JsonPropertyName("died")]
-        public bool died { get; set; }
-
-        public Powerup() { }
+        public bool Died { get; set; }
     }
 }
 

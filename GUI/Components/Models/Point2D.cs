@@ -1,8 +1,10 @@
-using System;
 using System.Text.Json.Serialization;
 
 namespace GUI.Components.Models
 {
+    /// <summary>
+    /// Represents a 2D coordinate or direction vector in the game world.
+    /// </summary>
     public class Point2D
     {
         [JsonPropertyName("X")]

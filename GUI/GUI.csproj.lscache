@@ -422,6 +422,7 @@ obj/Debug/net10.0/GUI.GeneratedMSBuildEditorConfig.editorconfig
 Components/
  App.razor
  Layout/
+  EmptyLayout.razor
   MainLayout.razor
   NavMenu.razor
   ReconnectModal.razor
@@ -437,6 +438,7 @@ Components/
 Components/
  App.razor
  Layout/
+  EmptyLayout.razor
   MainLayout.razor
   NavMenu.razor
   ReconnectModal.razor

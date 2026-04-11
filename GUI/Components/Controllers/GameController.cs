@@ -7,135 +7,201 @@ using GUI.Components.Models;
 
 namespace GUI.Components.Controllers
 {
+    /// <summary>
+    /// Manages the game state by processing events from the network controller
+    /// and providing thread-safe snapshots to the rendering layer.
+    /// </summary>
     public class GameController
     {
         private ConcurrentDictionary<int, Snake> _snakes = new();
         private ConcurrentDictionary<int, Wall> _walls = new();
         private ConcurrentDictionary<int, Powerup> _powerups = new();
 
-        private bool _isInitializing = false;
+        private bool _isInitializing;
         private ConcurrentDictionary<int, Wall> _pendingWalls = new();
-        private int? _pendingPlayerId = null;
-        private int? _pendingWorldSize = null;
+        private int? _pendingPlayerId;
+        private int? _pendingWorldSize;
 
+        /// <summary>The server-assigned player ID for this client.</summary>
         public int? PlayerId { get; private set; }
+
+        /// <summary>The world size received from the server.</summary>
         public int? WorldSize { get; private set; }
 
-        // Event raised when the state is updated; consumers should call InvokeAsync / StateHasChanged
+        /// <summary>Raised when game state changes; consumers should call StateHasChanged.</summary>
         public event Action? OnStateUpdated;
 
         private readonly NetworkController _network;
 
-        private DateTime _lastSend = DateTime.MinValue;
-
+        /// <summary>
+        /// Initializes the game controller and subscribes to network events.
+        /// </summary>
         public GameController(NetworkController network)
         {
             _network = network;
-            // subscribe
-            _network.OnPlayerIdReceived += id => { 
-                if (_isInitializing) _pendingPlayerId = id; 
-                else PlayerId = id; 
-                OnStateUpdated?.Invoke(); 
-            };
-            _network.OnWorldSizeReceived += ws => { 
-                if (_isInitializing) _pendingWorldSize = ws; 
-                else WorldSize = ws; 
-                OnStateUpdated?.Invoke(); 
-            };
-            _network.OnWallReceived += w => { 
-                if (_isInitializing) _pendingWalls[w.wall] = w;
-                else _walls[w.wall] = w;
-                OnStateUpdated?.Invoke(); 
-            };
-            _network.OnSnakeReceived += s => { 
-                if (_isInitializing) {
-                    _isInitializing = false;
-                    if (_pendingPlayerId.HasValue) PlayerId = _pendingPlayerId;
-                    if (_pendingWorldSize.HasValue) WorldSize = _pendingWorldSize;
-                    _walls = _pendingWalls;
-                    _snakes = new();
-                    _powerups = new();
-                }
-                
-                if (s.dc.HasValue && s.dc.Value && _snakes.ContainsKey(s.snake)) {
-                    _snakes.TryRemove(s.snake, out _);
-                } else {
-                    // Merge fields so we don't nullify body on death packets
-                    if (_snakes.TryGetValue(s.snake, out var existing)) {
-                        if (s.score != 0) existing.score = s.score;
-                        if (s.died.HasValue) existing.died = s.died;
-                        if (s.alive.HasValue) existing.alive = s.alive;
-                        if (s.join.HasValue) existing.join = s.join;
-                        if (s.dc.HasValue) existing.dc = s.dc;
-                        if (s.name != null) existing.name = s.name;
-                        if (s.body != null) existing.body = s.body;
-                        if (s.dir != null) existing.dir = s.dir;
-                    } else {
-                        // For a new snake, default omitted booleans to false
-                        s.died ??= false;
-                        s.alive ??= false;
-                        s.join ??= false;
-                        s.dc ??= false;
-                        _snakes[s.snake] = s; 
-                    }
-                }
-                OnStateUpdated?.Invoke(); 
-            };
-            _network.OnPowerupReceived += p => { 
-                if (_isInitializing) {
-                    _isInitializing = false;
-                    if (_pendingPlayerId.HasValue) PlayerId = _pendingPlayerId;
-                    if (_pendingWorldSize.HasValue) WorldSize = _pendingWorldSize;
-                    _walls = _pendingWalls;
-                    _snakes = new();
-                    _powerups = new();
-                }
-
-                if (p.died && _powerups.ContainsKey(p.power)) {
-                    _powerups.TryRemove(p.power, out _);
-                } else {
-                    _powerups[p.power] = p; 
-                }
-                OnStateUpdated?.Invoke(); 
-            };
-            _network.OnDisconnected += () => { OnStateUpdated?.Invoke(); };
+            _network.OnPlayerIdReceived += HandlePlayerIdReceived;
+            _network.OnWorldSizeReceived += HandleWorldSizeReceived;
+            _network.OnWallReceived += HandleWallReceived;
+            _network.OnSnakeReceived += HandleSnakeReceived;
+            _network.OnPowerupReceived += HandlePowerupReceived;
+            _network.OnDisconnected += () => OnStateUpdated?.Invoke();
         }
 
-        public IReadOnlyCollection<Snake> GetSnakes() => _snakes.Values.ToList().AsReadOnly();
-        public IReadOnlyCollection<Wall> GetWalls() => _walls.Values.ToList().AsReadOnly();
-        public IReadOnlyCollection<Powerup> GetPowerups() => _powerups.Values.ToList().AsReadOnly();
+        /// <summary>Returns a thread-safe deep-copied snapshot of all snakes.</summary>
+        public IReadOnlyList<Snake> GetSnakes() =>
+            _snakes.Values.Select(s => s.Clone()).ToList().AsReadOnly();
 
+        /// <summary>Returns a thread-safe snapshot of all walls.</summary>
+        public IReadOnlyCollection<Wall> GetWalls() =>
+            _walls.Values.ToList().AsReadOnly();
+
+        /// <summary>Returns a thread-safe snapshot of all powerups.</summary>
+        public IReadOnlyCollection<Powerup> GetPowerups() =>
+            _powerups.Values.ToList().AsReadOnly();
+
+        /// <summary>Returns a deep copy of the current player's snake, or null.</summary>
         public Snake? GetPlayerSnake()
         {
             if (!PlayerId.HasValue) return null;
-            _snakes.TryGetValue(PlayerId.Value, out var s);
-            return s;
+            return _snakes.TryGetValue(PlayerId.Value, out var s) ? s.Clone() : null;
         }
 
-        public Task ConnectAsync(string host, int port, string name)
+        /// <summary>Connects to the game server and enters the initialization phase.</summary>
+        public async Task ConnectAsync(string host, int port, string name)
         {
             _isInitializing = true;
             _pendingPlayerId = null;
             _pendingWorldSize = null;
             _pendingWalls = new();
-            return _network.ConnectAsync(host, port, name);
+            try
+            {
+                await _network.ConnectAsync(host, port, name);
+            }
+            catch
+            {
+                _isInitializing = false;
+                throw;
+            }
         }
 
+        /// <summary>Disconnects from the server and clears all local game state.</summary>
         public void Disconnect()
         {
             _network.Disconnect();
+            _isInitializing = false;
+            PlayerId = null;
+            WorldSize = null;
+            _snakes.Clear();
+            _powerups.Clear();
+            _walls.Clear();
+            _pendingWalls.Clear();
+
+            OnStateUpdated?.Invoke();
         }
 
+        /// <summary>Sends a movement command to the server if the handshake is complete.</summary>
         public Task SendMoveAsync(string moving)
         {
-            // ensure handshake completed
             if (!PlayerId.HasValue || !WorldSize.HasValue) return Task.CompletedTask;
-
-            // throttle -> at most one send per ~15ms (avoid flooding)
-            var now = DateTime.UtcNow;
-            if ((now - _lastSend).TotalMilliseconds < 15) return Task.CompletedTask;
-            _lastSend = now;
             return _network.SendMoveAsync(moving);
+        }
+
+        // ==================== Private Helpers ====================
+
+        /// <summary>
+        /// Commits pending initialization data and resets collections for the new session.
+        /// Called once when the first snake or powerup arrives after connecting.
+        /// </summary>
+        private void CommitPendingStateIfInitializing()
+        {
+            if (!_isInitializing) return;
+            _isInitializing = false;
+            if (_pendingPlayerId.HasValue) PlayerId = _pendingPlayerId;
+            if (_pendingWorldSize.HasValue) WorldSize = _pendingWorldSize;
+            _walls = _pendingWalls;
+            _snakes = new();
+            _powerups = new();
+        }
+
+        private void HandlePlayerIdReceived(int id)
+        {
+            if (_isInitializing) _pendingPlayerId = id;
+            else PlayerId = id;
+            OnStateUpdated?.Invoke();
+        }
+
+        private void HandleWorldSizeReceived(int ws)
+        {
+            if (_isInitializing) _pendingWorldSize = ws;
+            else WorldSize = ws;
+            OnStateUpdated?.Invoke();
+        }
+
+        private void HandleWallReceived(Wall w)
+        {
+            if (_isInitializing) _pendingWalls[w.Id] = w;
+            else _walls[w.Id] = w;
+            OnStateUpdated?.Invoke();
+        }
+
+        private void HandleSnakeReceived(Snake s)
+        {
+            CommitPendingStateIfInitializing();
+
+            if (s.Disconnected.HasValue && s.Disconnected.Value && _snakes.ContainsKey(s.Id))
+            {
+                _snakes.TryRemove(s.Id, out _);
+            }
+            else if (_snakes.TryGetValue(s.Id, out var existing))
+            {
+                MergeSnakeFields(existing, s);
+            }
+            else
+            {
+                s.Score ??= 0;
+                s.Died ??= false;
+                s.Alive ??= false;
+                s.Joined ??= false;
+                s.Disconnected ??= false;
+                _snakes[s.Id] = s;
+            }
+
+            OnStateUpdated?.Invoke();
+        }
+
+        private void HandlePowerupReceived(Powerup p)
+        {
+            CommitPendingStateIfInitializing();
+
+            if (p.Died && _powerups.ContainsKey(p.Id))
+                _powerups.TryRemove(p.Id, out _);
+            else
+                _powerups[p.Id] = p;
+
+            OnStateUpdated?.Invoke();
+        }
+
+        /// <summary>
+        /// Merges non-null fields from an incoming update into the existing snake record.
+        /// </summary>
+        private static void MergeSnakeFields(Snake existing, Snake update)
+        {
+            if (update.Score.HasValue) existing.Score = update.Score;
+            if (update.Died.HasValue)
+            {
+                existing.Died = update.Died;
+                if (update.Died.Value) existing.Alive = false;
+            }
+            if (update.Alive.HasValue)
+            {
+                existing.Alive = update.Alive;
+                if (update.Alive.Value) existing.Died = false;
+            }
+            if (update.Joined.HasValue) existing.Joined = update.Joined;
+            if (update.Disconnected.HasValue) existing.Disconnected = update.Disconnected;
+            if (update.Name != null) existing.Name = update.Name;
+            if (update.Body != null) existing.Body = update.Body;
+            if (update.Direction != null) existing.Direction = update.Direction;
         }
     }
 }

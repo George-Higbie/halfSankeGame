@@ -1,405 +1,548 @@
 @page "/snake"
+@layout GUI.Components.Layout.EmptyLayout
+@implements IDisposable
 @rendermode InteractiveServer
 @using Blazor.Extensions
 @using Blazor.Extensions.Canvas
 @using Blazor.Extensions.Canvas.Canvas2D
 @using System.Diagnostics
-    @using GUI.Components.Controllers
+@using GUI.Components.Controllers
 @using GUI.Components.Models
 @using System.Linq
 @inject IJSRuntime JsRuntime;
 @inject GameController GameController
 @inject GUI.Components.Controllers.NetworkController NetworkController
 
-<PageTitle> Snake </PageTitle>
+<PageTitle>Snake</PageTitle>
 
-<div style="position: fixed; left: 8px; top: 8px; z-index: 10; background: rgba(255,255,255,0.9); padding:8px; border-radius:6px;">
-    <label>Host: <input @bind="Host" /></label>
-    <label>Port: <input type="number" @bind="Port" style="width:80px" /></label>
-    <label>Name: <input @bind="PlayerName" /></label>
-    <button @onclick="Connect">Connect</button>
-    <button @onclick="Reconnect">Reconnect</button>
-    <button @onclick="() => _showSettings = !_showSettings">⚙️ Settings</button>
-        <div>Status: @_status</div>
-        @if (_reconnectInProgress)
-        {
-            <div>Retrying... @_reconnectCountdown s</div>
-            <button @onclick="(() => _reconnectCts?.Cancel())">Cancel</button>
-        }
-        
-    @if (_showSettings)
-    {
-        <div style="margin-top: 8px; border-top: 1px solid #ccc; padding-top: 8px;">
-            <label style="display:block;"><input type="checkbox" @bind="_highQualityTextures" /> High Quality Graphics</label>
-            <label style="display:block;"><input type="checkbox" @bind="_drawGrid" /> Draw Grid Overlay</label>
-        </div>
-    }
+@* ── Sidebar Toggle ── *@
+<button class="sidebar-toggle" @onclick="(() => _sidebarOpen = !_sidebarOpen)">
+    @(_sidebarOpen ? "✕" : "☰")
+</button>
 
-    <div style="margin-top:8px; max-height:300px; overflow:auto;">
-        <strong>Players</strong>
-        <ul style="list-style:none; padding:0; margin:4px 0;">
-            @foreach (var s in GameController.GetSnakes().OrderByDescending(x => x.score))
+@* ── Sidebar ── *@
+<div class="snake-sidebar @(_sidebarOpen ? "open" : "")">
+    <h2 style="margin:0 0 12px; font-size:1.3rem; letter-spacing:1px;">SNAKE</h2>
+
+    <div class="field-group">
+        <label>Host</label>
+        <input @bind="Host" />
+    </div>
+    <div class="field-group">
+        <label>Port</label>
+        <input type="number" @bind="Port" />
+    </div>
+    <div class="field-group">
+        <label>Name</label>
+        <input @bind="PlayerName" />
+    </div>
+
+    <div style="display:flex; gap:6px; margin-top:8px;">
+        <button class="btn-snake" @onclick="Connect">Connect</button>
+        <button class="btn-snake btn-secondary" @onclick="Reconnect">Reconnect</button>
+    </div>
+
+    <div class="status-line">@_status</div>
+
+    <div style="margin-top:12px; border-top:1px solid rgba(255,255,255,0.1); padding-top:10px;">
+        <label class="toggle"><input type="checkbox" @bind="_highQualityTextures" /> High Quality</label>
+        <label class="toggle"><input type="checkbox" @bind="_drawGrid" /> Grid Overlay</label>
+    </div>
+
+    <div style="margin-top:12px; border-top:1px solid rgba(255,255,255,0.1); padding-top:10px;">
+        <strong style="font-size:0.85rem; text-transform:uppercase; letter-spacing:1px; opacity:0.7;">Scoreboard</strong>
+        <ul class="scoreboard">
+            @foreach (var s in GameController.GetSnakes().OrderByDescending(x => x.Score ?? 0))
             {
-                <li style="padding:2px; cursor:pointer;" @onclick="(() => { _centerTargetSnakeId = s.snake; })">
-                    @s.name (@s.score)
+                <li @onclick="(() => { _centerTargetSnakeId = s.Id; })">
+                    <span>@(s.Name ?? "?")</span>
+                    <span>@(s.Score ?? 0)</span>
                 </li>
             }
         </ul>
     </div>
 </div>
 
-<div id="snakeCanvas" style="position: fixed; width: 100%; height: 100%; z-index: 1;">
-    <BECanvas Width="1000" Height="1000" @ref="_canvasReference"></BECanvas>
+@* ── Canvas ── *@
+<div id="snakeCanvas" style="position:fixed; inset:0; z-index:1; background:#7c9c45; overflow:hidden;">
+    <BECanvas Width="1920" Height="1080" @ref="_canvasReference"></BECanvas>
 </div>
 
+@* ── Death Overlay ── *@
 @if (_showDeathScreen)
 {
-    <div style="position: fixed; left: 0; top: 0; width: 100%; height: 100%; z-index: 20; background: rgba(0,0,0,0.7); display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; animation: fadeIn 1s ease-in-out forwards; animation-delay: 0.25s; opacity: 0;">
-        <style>
-            @@keyframes fadeIn {
-                to { opacity: 1; }
-            }
-        </style>
-        <h1 style="font-size: 4rem; color: #ff4444; font-weight: bold; margin-bottom: 24px; text-shadow: 2px 2px 4px #000;">GAME OVER</h1>
-        
-        <h2>High Scores</h2>
-        <ul style="list-style: none; padding: 0; min-width: 200px; text-align: left; background: rgba(255,255,255,0.1); padding: 16px; border-radius: 8px;">
-            @foreach (var s in GameController.GetSnakes().OrderByDescending(x => x.score).Take(5))
-            {
-                <li style="font-size: 1.2rem; padding: 4px; border-bottom: 1px solid rgba(255,255,255,0.2);">
-                    @(s.name ?? "Anonymous") <span style="float: right;">@s.score</span>
-                </li>
-            }
-        </ul>
-
-        <button style="margin-top: 24px; font-size: 1.5rem; padding: 12px 32px; background: #4caf50; color: white; border: none; border-radius: 8px; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.5);" @onclick="Respawn">
-            Respawn
-        </button>
+    <div class="death-overlay">
+        <h1>GAME OVER</h1>
+        <div class="death-scores">
+            <h3>High Scores</h3>
+            <ul>
+                @foreach (var s in GameController.GetSnakes().OrderByDescending(x => x.Score ?? 0).Take(5))
+                {
+                    <li>
+                        <span>@(s.Name ?? "Anonymous")</span>
+                        <span>@(s.Score ?? 0)</span>
+                    </li>
+                }
+            </ul>
+        </div>
+        <button class="btn-respawn" @onclick="Respawn">Respawn</button>
     </div>
 }
 
+@* ── Scoped Styles ── *@
+<style>
+    .snake-sidebar {
+        position: fixed;
+        right: 0; top: 0; bottom: 0;
+        width: 220px;
+        z-index: 10;
+        background: rgba(18, 18, 24, 0.92);
+        backdrop-filter: blur(12px);
+        color: #e0e0e0;
+        padding: 20px 16px;
+        font-family: 'Segoe UI', system-ui, sans-serif;
+        font-size: 0.9rem;
+        overflow-y: auto;
+        border-left: 1px solid rgba(255,255,255,0.06);
+        transform: translateX(100%);
+        transition: transform 0.2s ease;
+    }
+    .snake-sidebar.open {
+        transform: translateX(0);
+    }
+    .sidebar-toggle {
+        position: fixed;
+        right: 12px; top: 12px;
+        z-index: 20;
+        width: 36px; height: 36px;
+        border: none;
+        border-radius: 6px;
+        background: rgba(18, 18, 24, 0.7);
+        color: #e0e0e0;
+        font-size: 1.2rem;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        backdrop-filter: blur(8px);
+        transition: background 0.15s;
+    }
+    .sidebar-toggle:hover { background: rgba(18, 18, 24, 0.9); }
+    .snake-sidebar .field-group {
+        margin-bottom: 6px;
+    }
+    .snake-sidebar .field-group label {
+        display: block;
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        opacity: 0.6;
+        margin-bottom: 2px;
+    }
+    .snake-sidebar input[type="text"],
+    .snake-sidebar input[type="number"],
+    .snake-sidebar input:not([type]) {
+        width: 100%;
+        padding: 6px 8px;
+        border: 1px solid rgba(255,255,255,0.15);
+        border-radius: 4px;
+        background: rgba(255,255,255,0.08);
+        color: #fff;
+        font-size: 0.85rem;
+        box-sizing: border-box;
+    }
+    .snake-sidebar input:focus {
+        outline: none;
+        border-color: #4caf50;
+    }
+    .btn-snake {
+        flex: 1;
+        padding: 7px 0;
+        border: none;
+        border-radius: 4px;
+        background: #4caf50;
+        color: #fff;
+        font-weight: 600;
+        font-size: 0.8rem;
+        cursor: pointer;
+        transition: background 0.15s;
+    }
+    .btn-snake:hover { background: #43a047; }
+    .btn-snake.btn-secondary {
+        background: rgba(255,255,255,0.1);
+    }
+    .btn-snake.btn-secondary:hover { background: rgba(255,255,255,0.18); }
+    .status-line {
+        margin-top: 8px;
+        font-size: 0.8rem;
+        opacity: 0.7;
+    }
+    .toggle {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 0.82rem;
+        margin-bottom: 4px;
+        cursor: pointer;
+    }
+    .scoreboard {
+        list-style: none;
+        padding: 0;
+        margin: 6px 0 0;
+    }
+    .scoreboard li {
+        display: flex;
+        justify-content: space-between;
+        padding: 4px 6px;
+        border-radius: 3px;
+        cursor: pointer;
+        font-size: 0.82rem;
+        transition: background 0.1s;
+    }
+    .scoreboard li:hover {
+        background: rgba(255,255,255,0.08);
+    }
+
+    /* Death overlay */
+    .death-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 20;
+        background: rgba(0,0,0,0.75);
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        color: #fff;
+        animation: fadeIn 0.6s ease forwards;
+        opacity: 0;
+    }
+    .death-overlay h1 {
+        font-size: 4rem;
+        color: #ff4444;
+        font-weight: 800;
+        margin: 0 0 20px;
+        text-shadow: 0 2px 12px rgba(255,68,68,0.5);
+        letter-spacing: 4px;
+    }
+    .death-scores {
+        background: rgba(255,255,255,0.07);
+        border-radius: 10px;
+        padding: 16px 24px;
+        min-width: 220px;
+    }
+    .death-scores h3 {
+        margin: 0 0 10px;
+        font-size: 0.9rem;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        opacity: 0.7;
+    }
+    .death-scores ul {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+    }
+    .death-scores li {
+        display: flex;
+        justify-content: space-between;
+        padding: 5px 0;
+        border-bottom: 1px solid rgba(255,255,255,0.1);
+        font-size: 1rem;
+    }
+    .btn-respawn {
+        margin-top: 24px;
+        font-size: 1.3rem;
+        padding: 12px 40px;
+        background: #4caf50;
+        color: #fff;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+        font-weight: 700;
+        box-shadow: 0 4px 16px rgba(76,175,80,0.4);
+        transition: background 0.15s, transform 0.1s;
+    }
+    .btn-respawn:hover { background: #43a047; transform: translateY(-1px); }
+    @@keyframes fadeIn { to { opacity: 1; } }
+</style>
+
 @code
 {
+    // ==================== Constants ====================
+    private const int SnakeWidth = 10;
+    private const int WallHalfWidth = 25;
+    private const int WallThickness = 50;
+    private const double BitDistance = 20.0;
+    private const double ExplosionDelay = 0.05;
+    private const double ParticleLifespan = 0.6;
+    private const int HeadOuterRadius = 9;
+    private const int HeadMiddleRadius = 8;
+    private const int HeadInnerRadius = 6;
+    private const int FrameDelayMs = 16;
+    private const int GridSpacing = 50;
+    private const int BrickSize = 25;
+    private const double MinSpawnClearance = 100.0;
+
+    // ==================== Private Fields ====================
     private BECanvasComponent? _canvasReference;
     private Canvas2DContext? _context;
-    private IJSObjectReference? _jsModule;
     private CancellationTokenSource? _renderCts;
+    private readonly Stopwatch _frameStopwatch = new();
+    private Action? _onDisconnectedHandler;
+    private readonly Dictionary<int, DeathAnim> _deathAnimations = new();
+    private readonly string[] _colors = { "red", "green", "blue", "orange", "purple", "brown", "magenta", "teal" };
+    private int _viewW = 1920;
+    private int _viewH = 1080;
 
-    // connection UI
+    // ==================== UI State ====================
     private string Host { get; set; } = "localhost";
     private int Port { get; set; } = 11000;
     private string PlayerName { get; set; } = "Player";
-    private string _status = "disconnected";
+    private string _status = "Disconnected";
+    private bool _showDeathScreen;
+    private bool _spawnSafe;
+    private bool _rerolling;
+    private bool _drawGrid = true;
+    private bool _highQualityTextures = true;
+    private bool _sidebarOpen = true;
+    private int? _centerTargetSnakeId;
 
+    // ==================== Inner Types ====================
 
-
-    private bool _showDeathScreen = false;
-
-    private bool _spawnVerified = false;
-    private int _spawnRerollCount = 0;
-
-    private bool IsSpawnSafe(Snake player)
+    private class DeathAnim
     {
-        if (player.body == null || player.body.Count < 2 || player.dir == null) return false;
-        
-        var head = player.body.Last();
-        var headX = (double)head.X;
-        var headY = (double)head.Y;
-        var dirX = (double)player.dir.X;
-        var dirY = (double)player.dir.Y;
-        
-        // Ray length 500 units (10 tiles) forward from head
-        double rayX1 = headX;
-        double rayY1 = headY;
-        double rayX2 = headX + (dirX * 500);
-        double rayY2 = headY + (dirY * 500);
-
-        // Also ray from tail backwards? The user says "same 10 tile rule applies so newly spawning snakes don't unfairly spawn infront of someone playing" -> this means we should check if ANOTHER snake's head is directly pointing at our body!
-        // But simply checking if any part of our snake overlaps with any part of another snake:
-        // Let's create bounding boxes for our own snake segments
-        var mySegments = new List<(double x1, double y1, double x2, double y2)>();
-        for (int i = 0; i < player.body.Count - 1; i++)
-        {
-            var bp1 = player.body[i];
-            var bp2 = player.body[i+1];
-            mySegments.Add((
-                Math.Min(bp1.X, bp2.X) - 10,
-                Math.Min(bp1.Y, bp2.Y) - 10,
-                Math.Max(bp1.X, bp2.X) + 10,
-                Math.Max(bp1.Y, bp2.Y) + 10
-            ));
-        }
-
-        foreach (var w in GameController.GetWalls())
-        {
-            if (w.p1 == null || w.p2 == null) continue;
-            double rx1 = Math.Min(w.p1.X, w.p2.X) - 25;
-            double rx2 = Math.Max(w.p1.X, w.p2.X) + 25;
-            double ry1 = Math.Min(w.p1.Y, w.p2.Y) - 25;
-            double ry2 = Math.Max(w.p1.Y, w.p2.Y) + 25;
-            
-            // If any part of my body is in the wall
-            foreach (var (mx1, my1, mx2, my2) in mySegments)
-            {
-                if (RectsIntersect(mx1, my1, mx2, my2, rx1, ry1, rx2, ry2)) return false;
-            }
-        }
-
-        foreach (var s in GameController.GetSnakes())
-        {
-            if (s.snake == player.snake || s.alive != true || s.body == null || s.body.Count < 2) continue;
-            
-            var otherHead = s.body.Last();
-            var otherDirX = (double)(s.dir?.X ?? 0);
-            var otherDirY = (double)(s.dir?.Y ?? 0);
-            double otherRayX2 = otherHead.X + (otherDirX * 500);
-            double otherRayY2 = otherHead.Y + (otherDirY * 500);
-
-            for (int i = 0; i < s.body.Count - 1; i++)
-            {
-                var bp1 = s.body[i];
-                var bp2 = s.body[i+1];
-                double rx1 = Math.Min(bp1.X, bp2.X) - 10;
-                double rx2 = Math.Max(bp1.X, bp2.X) + 10;
-                double ry1 = Math.Min(bp1.Y, bp2.Y) - 10;
-                double ry2 = Math.Max(bp1.Y, bp2.Y) + 10;
-                
-                // If any part of my body intersects any part of another snake
-                foreach (var (mx1, my1, mx2, my2) in mySegments)
-                {
-                    if (RectsIntersect(mx1, my1, mx2, my2, rx1, ry1, rx2, ry2)) return false;
-                    // If the other snake's forward ray intersects my spawn body, it's unsafe for them (and me)
-                    if (LineIntersectsRect(otherHead.X, otherHead.Y, otherRayX2, otherRayY2, mx1, my1, mx2, my2)) return false;
-                }
-
-                // If my forward ray intersects their body
-                if (LineIntersectsRect(rayX1, rayY1, rayX2, rayY2, rx1, ry1, rx2, ry2)) return false;
-            }
-        }
-        
-        return true;
+        public double ElapsedSeconds { get; set; }
+        public IReadOnlyList<Point2D> Path { get; set; } = Array.Empty<Point2D>();
+        public string Color { get; set; } = "orange";
+        public bool IsFinished { get; set; }
     }
 
-    private bool RectsIntersect(double ax1, double ay1, double ax2, double ay2, double bx1, double by1, double bx2, double by2)
+    // ==================== Lifecycle ====================
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        return ax1 <= bx2 && ax2 >= bx1 && ay1 <= by2 && ay2 >= by1;
-    }
+        if (!firstRender) return;
 
-    private bool LineIntersectsRect(double p1x, double p1y, double p2x, double p2y, double rx1, double ry1, double rx2, double ry2)
-    {
-        if (p1x == p2x) // Vertical ray
+        await JsRuntime.InvokeAsync<IJSObjectReference>("import", "./Components/Pages/SnakeGUI.razor.js");
+        _context = await _canvasReference!.CreateCanvas2DAsync();
+        await JsRuntime.InvokeAsync<object>("initRenderJS", DotNetObjectReference.Create(this));
+
+        _renderCts = new CancellationTokenSource();
+        _ = Task.Run(() => RenderLoopAsync(_renderCts.Token));
+
+        _onDisconnectedHandler = () => _ = InvokeAsync(() =>
         {
-            double minY = Math.Min(p1y, p2y);
-            double maxY = Math.Max(p1y, p2y);
-            return p1x >= rx1 && p1x <= rx2 && minY <= ry2 && maxY >= ry1;
-        }
-        else if (p1y == p2y) // Horizontal ray
-        {
-            double minX = Math.Min(p1x, p2x);
-            double maxX = Math.Max(p1x, p2x);
-            return p1y >= ry1 && p1y <= ry2 && minX <= rx2 && maxX >= rx1;
-        }
-        return false;
-    }
-
-    protected override async Task OnAfterRenderAsync( bool firstRender )
-    {
-        if ( firstRender )
-        {
-            _jsModule = await JsRuntime.InvokeAsync<IJSObjectReference>( "import", "./Components/Pages/SnakeGUI.razor.js" );
-            _context = await _canvasReference.CreateCanvas2DAsync();
-            await JsRuntime.InvokeAsync<object>( "initRenderJS", DotNetObjectReference.Create( this ) );
-
-            // start render loop
-            _renderCts = new CancellationTokenSource();
-            _ = Task.Run(() => RenderLoopAsync(_renderCts.Token));
-
-            // subscribe to game/network events to update UI
-            _onStateUpdatedHandler = () => _ = InvokeAsync(async () => {
-                var player = GameController.GetPlayerSnake();
-                if (player != null)
-                {
-                    if (player.alive == true)
-                    {
-                        if (_showDeathScreen)
-                        {
-                            _showDeathScreen = false;
-                        }
-                        
-                        if (!_spawnVerified)
-                        {
-                            if (player.body == null || player.body.Count < 2 || player.dir == null)
-                            {
-                                // Wait until we actually receive the snake's body and direction
-                                return;
-                            }
-
-                            if (!IsSpawnSafe(player))
-                            {
-                                if (_spawnRerollCount < 3)
-                                {
-                                    _spawnRerollCount++;
-                                    // Disconnect and quickly reroll connection silently so the UI doesn't visually glitch out
-                                    _ = Task.Run(async () => {
-                                        var safeHost = Host;
-                                        var safePort = Port;
-                                        var safeName = PlayerName;
-                                        GameController.Disconnect();
-                                        await Task.Delay(50);
-                                        await GameController.ConnectAsync(safeHost, safePort, safeName);
-                                    });
-                                    return;
-                                }
-                                else 
-                                {
-                                    // Give up after 3 rerolls so we don't memory leak or infinitely spin the server
-                                }
-                            }
-                            _spawnVerified = true;
-                            _spawnRerollCount = 0;
-                        }
-                    }
-                    else if (player.died == true && !_showDeathScreen)
-                    {
-                        _showDeathScreen = true;
-                        _spawnVerified = false;
-                        // NO disconnect here! Server auto-respawns, or user clicks Respawn manually.
-                    }
-                }
-                StateHasChanged();
-            });
-            GameController.OnStateUpdated += _onStateUpdatedHandler;
-            _onDisconnectedHandler = () => _ = InvokeAsync(() => { 
-                _status = "disconnected"; 
-                if (!_showDeathScreen) StateHasChanged(); 
-            });
-            NetworkController.OnDisconnected += _onDisconnectedHandler;
-        }
-    }
-
-
-
-    [JSInvokable]
-    public void HandleKeyPress( string key )
-    {
-        // map keys to moving commands
-        var cmd = key.ToLowerInvariant() switch
-        {
-            "w" => "up",
-            "a" => "left",
-            "s" => "down",
-            "d" => "right",
-            "arrowup" => "up",
-            "arrowleft" => "left",
-            "arrowdown" => "down",
-            "arrowright" => "right",
-            _ => null
-        };
-
-        if (cmd != null)
-        {
-            _ = GameController.SendMoveAsync(cmd);
-        }
-        Debug.WriteLine("key pressed: " + key + " -> " + cmd);
-    }
-
-    private void Respawn()
-    {
-        _showDeathScreen = false;
-        _spawnVerified = false;
-        _spawnRerollCount = 0;
-        _ = Reconnect();
-    }
-
-    private async Task Connect()
-    {
-        _showDeathScreen = false;
-        _spawnVerified = false;
-        _spawnRerollCount = 0;
-        // single-shot connect (no retries)
-        try
-        {
-            _status = "connecting";
+            _status = "Disconnected";
             StateHasChanged();
-            await GameController.ConnectAsync(Host, Port, PlayerName);
-            _status = "connected";
-            StateHasChanged();
-        }
-        catch (Exception ex)
-        {
-            _status = "error: " + ex.Message;
-            StateHasChanged();
-        }
-    }
-
-    private async Task ConnectWithRetries(int maxAttempts = 6)
-    {
-        _showDeathScreen = false;
-        _reconnectCts?.Cancel();
-        _reconnectCts = new CancellationTokenSource();
-        var ct = _reconnectCts.Token;
-        _reconnectInProgress = true;
-        try
-        {
-            for (int attempt = 0; attempt < maxAttempts && !ct.IsCancellationRequested; attempt++)
-            {
-                try
-                {
-                    _status = $"connecting (attempt {attempt + 1})";
-                    StateHasChanged();
-                    await GameController.ConnectAsync(Host, Port, PlayerName);
-                    _status = "connected";
-                    _reconnectInProgress = false;
-                    StateHasChanged();
-                    return;
-                }
-                catch (Exception)
-                {
-                    // compute backoff in ms
-                    var delayMs = Math.Min(8000, 500 * (1 << Math.Min(attempt, 6)));
-                    _reconnectCountdown = (int)Math.Ceiling(delayMs / 1000.0);
-                    for (int s = _reconnectCountdown; s > 0 && !ct.IsCancellationRequested; s--)
-                    {
-                        _status = $"reconnect in {s}s (attempt {attempt + 1})";
-                        StateHasChanged();
-                        await Task.Delay(1000, ct);
-                    }
-                }
-            }
-
-            _status = "reconnect failed";
-            _reconnectInProgress = false;
-            StateHasChanged();
-        }
-        catch (TaskCanceledException)
-        {
-            _status = "reconnect cancelled";
-            _reconnectInProgress = false;
-            StateHasChanged();
-        }
-    }
-
-    private Action? _onStateUpdatedHandler;
-    private Action? _onDisconnectedHandler;
-    private int? _centerTargetSnakeId = null;
-
-    private async Task Reconnect()
-    {
-        // perform reconnect attempts with UI countdown
-        await ConnectWithRetries();
+        });
+        NetworkController.OnDisconnected += _onDisconnectedHandler;
     }
 
     public void Dispose()
     {
         try { _renderCts?.Cancel(); } catch { }
-        if (_onStateUpdatedHandler != null) GameController.OnStateUpdated -= _onStateUpdatedHandler;
         if (_onDisconnectedHandler != null) NetworkController.OnDisconnected -= _onDisconnectedHandler;
     }
 
-    // single Dispose implementation
+    // ==================== Input ====================
+
+    [JSInvokable]
+    public void HandleKeyPress(string key)
+    {
+        var cmd = key.ToLowerInvariant() switch
+        {
+            "w" or "arrowup" => "up",
+            "a" or "arrowleft" => "left",
+            "s" or "arrowdown" => "down",
+            "d" or "arrowright" => "right",
+            _ => null
+        };
+        if (cmd != null) _ = GameController.SendMoveAsync(cmd);
+    }
+
+    // ==================== Connection ====================
+
+    private async Task Connect()
+    {
+        _showDeathScreen = false;
+        _spawnSafe = false;
+        _rerolling = false;
+        GameController.Disconnect();
+        try
+        {
+            _status = "Connecting...";
+            StateHasChanged();
+            await GameController.ConnectAsync(Host, Port, PlayerName);
+            _status = "Connected";
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            _status = "Error: " + ex.Message;
+            StateHasChanged();
+        }
+    }
+
+    private async Task Reconnect()
+    {
+        _showDeathScreen = false;
+        _spawnSafe = false;
+        GameController.Disconnect();
+        try
+        {
+            _status = "Connecting...";
+            StateHasChanged();
+            await GameController.ConnectAsync(Host, Port, PlayerName);
+            _status = "Connected";
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            _status = "Error: " + ex.Message;
+            StateHasChanged();
+        }
+    }
+
+    private void Respawn()
+    {
+        _showDeathScreen = false;
+        _spawnSafe = false;
+        _rerolling = false;
+        _ = Reconnect();
+    }
+
+    // ==================== Game State ====================
+
+    private void CheckPlayerState()
+    {
+        var player = GameController.GetPlayerSnake();
+        if (player == null) return;
+
+        if (player.Died == true && !_showDeathScreen)
+        {
+            _showDeathScreen = true;
+            _spawnSafe = false;
+            StartDeathAnimation(player);
+        }
+
+        if (player.Alive == true && !_spawnSafe && !_showDeathScreen)
+        {
+            if (player.Body == null || player.Body.Count < 2) return;
+
+            if (IsSpawnSafe(player))
+            {
+                _spawnSafe = true;
+                _rerolling = false;
+            }
+            else if (!_rerolling)
+            {
+                _rerolling = true;
+                _ = Task.Run(async () =>
+                {
+                    GameController.Disconnect();
+                    await Task.Delay(80);
+                    await InvokeAsync(() => Reconnect());
+                });
+            }
+        }
+    }
+
+    private bool IsSpawnSafe(Snake player)
+    {
+        if (player.Body == null || player.Body.Count < 2) return false;
+        var head = player.Body[^1];
+
+        foreach (var w in GameController.GetWalls())
+        {
+            if (w.Point1 == null || w.Point2 == null) continue;
+            double wx1 = Math.Min(w.Point1.X, w.Point2.X) - WallHalfWidth;
+            double wx2 = Math.Max(w.Point1.X, w.Point2.X) + WallHalfWidth;
+            double wy1 = Math.Min(w.Point1.Y, w.Point2.Y) - WallHalfWidth;
+            double wy2 = Math.Max(w.Point1.Y, w.Point2.Y) + WallHalfWidth;
+
+            if (DistToRect(head.X, head.Y, wx1, wy1, wx2, wy2) < MinSpawnClearance)
+                return false;
+        }
+
+        foreach (var s in GameController.GetSnakes())
+        {
+            if (s.Id == player.Id || s.Alive != true || s.Body == null || s.Body.Count < 2) continue;
+
+            for (int i = 0; i < s.Body.Count - 1; i++)
+            {
+                var a = s.Body[i];
+                var b = s.Body[i + 1];
+                for (int j = 0; j < player.Body.Count - 1; j++)
+                {
+                    var c = player.Body[j];
+                    var d = player.Body[j + 1];
+                    if (SegmentDist(a.X, a.Y, b.X, b.Y, c.X, c.Y, d.X, d.Y) < MinSpawnClearance)
+                        return false;
+                }
+            }
+
+            var otherHead = s.Body[^1];
+            for (int j = 0; j < player.Body.Count - 1; j++)
+            {
+                var c = player.Body[j];
+                var d = player.Body[j + 1];
+                if (PointToSegDist(otherHead.X, otherHead.Y, c.X, c.Y, d.X, d.Y) < MinSpawnClearance)
+                    return false;
+            }
+
+            for (int i = 0; i < s.Body.Count - 1; i++)
+            {
+                var a = s.Body[i];
+                var b = s.Body[i + 1];
+                if (PointToSegDist(head.X, head.Y, a.X, a.Y, b.X, b.Y) < MinSpawnClearance)
+                    return false;
+            }
+        }
+        return true;
+    }
+
+    private static double DistToRect(double px, double py, double rx1, double ry1, double rx2, double ry2)
+    {
+        double cx = Math.Max(rx1, Math.Min(px, rx2));
+        double cy = Math.Max(ry1, Math.Min(py, ry2));
+        double dx = px - cx, dy = py - cy;
+        return Math.Sqrt(dx * dx + dy * dy);
+    }
+
+    private static double PointToSegDist(double px, double py, double ax, double ay, double bx, double by)
+    {
+        double abx = bx - ax, aby = by - ay;
+        double len2 = abx * abx + aby * aby;
+        double t = len2 < 0.0001 ? 0 : Math.Clamp(((px - ax) * abx + (py - ay) * aby) / len2, 0, 1);
+        double cx = ax + t * abx, cy = ay + t * aby;
+        double dx = px - cx, dy = py - cy;
+        return Math.Sqrt(dx * dx + dy * dy);
+    }
+
+    private static double SegmentDist(double a1x, double a1y, double a2x, double a2y, double b1x, double b1y, double b2x, double b2y)
+    {
+        return Math.Min(
+            Math.Min(PointToSegDist(a1x, a1y, b1x, b1y, b2x, b2y), PointToSegDist(a2x, a2y, b1x, b1y, b2x, b2y)),
+            Math.Min(PointToSegDist(b1x, b1y, a1x, a1y, a2x, a2y), PointToSegDist(b2x, b2y, a1x, a1y, a2x, a2y)));
+    }
+
+    private void StartDeathAnimation(Snake snake)
+    {
+        if (_deathAnimations.ContainsKey(snake.Id)) return;
+        _deathAnimations[snake.Id] = new DeathAnim
+        {
+            Path = snake.Body?.ToList() ?? new List<Point2D>(),
+            Color = _colors[snake.Id % _colors.Length]
+        };
+    }
+
+    // ==================== Render Loop ====================
 
     private async Task RenderLoopAsync(CancellationToken ct)
     {
+        _frameStopwatch.Start();
+        int tick = 0;
         try
         {
             while (!ct.IsCancellationRequested)
@@ -407,388 +550,178 @@
                 try
                 {
                     await DrawFrame();
+                    if (++tick % 6 == 0)
+                    {
+                        CheckPlayerState();
+                        await InvokeAsync(StateHasChanged);
+                    }
                 }
-                catch (Exception ex)
-                {
-                    Debug.WriteLine("DrawFrame error: " + ex.Message);
-                }
-
-                await Task.Delay(16, ct);
+                catch { /* skip frame */ }
+                await Task.Delay(FrameDelayMs, ct);
             }
         }
         catch (TaskCanceledException) { }
     }
 
-    private readonly string[] _colors = new[] { "red", "green", "blue", "orange", "purple", "brown", "magenta", "teal" };
-    private class DeathAnim
-    {
-        public double ElapsedSeconds { get; set; } = 0.0;
-        public IReadOnlyList<Point2D> Path { get; set; } = Array.Empty<Point2D>();
-        public string Color { get; set; } = "orange";
-        public bool IsFinished { get; set; } = false;
-    }
-
-    private readonly Dictionary<int, DeathAnim> _deathAnimations = new();
-
-    // reconnect state
-    private CancellationTokenSource? _reconnectCts;
-    private bool _reconnectInProgress = false;
-    private int _reconnectCountdown = 0;
-
-    private bool _showSettings = false;
-    private bool _drawGrid = true;
-    private bool _highQualityTextures = true;
+    // ==================== Drawing ====================
 
     private async Task DrawFrame()
     {
         if (_context == null) return;
 
+        var elapsed = _frameStopwatch.Elapsed.TotalSeconds;
+        _frameStopwatch.Restart();
+
+        try
+        {
+            var dims = await JsRuntime.InvokeAsync<int[]>("getViewportSize");
+            if (dims is { Length: 2 } && dims[0] > 0 && dims[1] > 0)
+            {
+                _viewW = dims[0];
+                _viewH = dims[1];
+            }
+        }
+        catch { }
+
         await _context.BeginBatchAsync();
+        await _context.SetFillStyleAsync(_highQualityTextures ? "#7c9c45" : "#e8f5ff");
+        await _context.FillRectAsync(0, 0, _viewW, _viewH);
 
-        // clear based on settings
-        if (_highQualityTextures)
-        {
-            await _context.SetFillStyleAsync("#7c9c45"); // grass green
-        }
-        else
-        {
-            await _context.SetFillStyleAsync("#e8f5ff"); // default blueish
-        }
-        
-        await _context.FillRectAsync(0, 0, 1000, 1000);
+        var worldSize = GameController.WorldSize ?? 2000;
 
-        var worldSize = GameController.WorldSize ?? 1000;
-
-        // determine center target: either selected player or self
-        int centerX = 0, centerY = 0;
         Snake? centerSnake = null;
         if (_centerTargetSnakeId.HasValue)
+            centerSnake = GameController.GetSnakes().FirstOrDefault(s => s.Id == _centerTargetSnakeId.Value);
+        centerSnake ??= GameController.GetPlayerSnake();
+
+        int centerX = 0, centerY = 0;
+        if (centerSnake?.Body?.Count > 0)
         {
-            centerSnake = GameController.GetSnakes().FirstOrDefault(s => s.snake == _centerTargetSnakeId.Value);
-        }
-        if (centerSnake == null)
-        {
-            centerSnake = GameController.GetPlayerSnake();
-        }
-        if (centerSnake?.body?.Count > 0)
-        {
-            var head = centerSnake.body[centerSnake.body.Count - 1];
+            var head = centerSnake.Body[^1];
             centerX = head.X;
             centerY = head.Y;
         }
 
-        // clip and transform
+        var halfWorld = worldSize / 2;
+        centerX = Math.Clamp(centerX, -halfWorld + _viewW / 2, halfWorld - _viewW / 2);
+        centerY = Math.Clamp(centerY, -halfWorld + _viewH / 2, halfWorld - _viewH / 2);
+
         await _context.BeginPathAsync();
-        await _context.RectAsync(0, 0, 1000, 1000);
+        await _context.RectAsync(0, 0, _viewW, _viewH);
         await _context.ClipAsync();
         await _context.SaveAsync();
-
-        await _context.TranslateAsync(500, 500);
+        await _context.TranslateAsync(_viewW / 2, _viewH / 2);
         await _context.TranslateAsync(-centerX, -centerY);
 
         if (_drawGrid && _highQualityTextures)
+            await DrawGrid(worldSize);
+
+        await DrawDeathAnimations(elapsed);
+        await DrawWalls();
+        await DrawPowerups();
+        await DrawSnakes();
+
+        await _context.RestoreAsync();
+        await _context.EndBatchAsync();
+    }
+
+    private async Task DrawGrid(int worldSize)
+    {
+        await _context!.SetStrokeStyleAsync("rgba(0,0,0,0.05)");
+        await _context.SetLineWidthAsync(2);
+        await _context.BeginPathAsync();
+        var hw = worldSize / 2;
+        for (int i = -hw; i <= hw; i += GridSpacing)
         {
-            await _context.SetStrokeStyleAsync("rgba(0,0,0,0.05)");
-            await _context.SetLineWidthAsync(2);
-            await _context.BeginPathAsync();
-            var hw = worldSize / 2;
-            for (int i = -hw; i <= hw; i += 50)
-            {
-                await _context.MoveToAsync(i, -hw);
-                await _context.LineToAsync(i, hw);
-                await _context.MoveToAsync(-hw, i);
-                await _context.LineToAsync(hw, i);
-            }
-            await _context.StrokeAsync();
+            await _context.MoveToAsync(i, -hw);
+            await _context.LineToAsync(i, hw);
+            await _context.MoveToAsync(-hw, i);
+            await _context.LineToAsync(hw, i);
         }
+        await _context.StrokeAsync();
+    }
 
-        // draw walls background/borders (Pass 1)
-        await _context.SetFillStyleAsync(_highQualityTextures ? "#2a2c2f" : "#222222");
-        foreach (var w in GameController.GetWalls())
+    private async Task DrawDeathAnimations(double elapsed)
+    {
+        var finished = new List<int>();
+        foreach (var (id, anim) in _deathAnimations)
         {
-            if (w.p1 == null || w.p2 == null) continue;
-            var x = (double)Math.Min(w.p1.X, w.p2.X) - 25;
-            var y = (double)Math.Min(w.p1.Y, w.p2.Y) - 25;
-            var wdt = (double)Math.Abs(w.p1.X - w.p2.X);
-            var hgt = (double)Math.Abs(w.p1.Y - w.p2.Y);
-            
-            if (wdt == 0) { wdt = 50; hgt += 50; }
-            else { hgt = 50; wdt += 50; }
-            
-            // Draw slightly larger rect to act as a border under the main fills
-            await _context.FillRectAsync(x - 2, y - 2, wdt + 4, hgt + 4);
-        }
-
-        // draw walls interior (Pass 2)
-        foreach (var w in GameController.GetWalls())
-        {
-            if (w.p1 == null || w.p2 == null) continue;
-            var x = (double)Math.Min(w.p1.X, w.p2.X);
-            var y = (double)Math.Min(w.p1.Y, w.p2.Y);
-            var wdt = (double)Math.Abs(w.p1.X - w.p2.X);
-            var hgt = (double)Math.Abs(w.p1.Y - w.p2.Y);
-            
-            if (wdt == 0)
+            if (anim.IsFinished)
             {
-                x -= 25;
-                y -= 25;
-                wdt = 50;
-                hgt += 50;
-            }
-            else
-            {
-                x -= 25;
-                y -= 25;
-                hgt = 50;
-                wdt += 50;
-            }
-            
-            if (_highQualityTextures)
-            {
-                await _context.SaveAsync();
-                
-                await _context.SetFillStyleAsync("#65696d");
-                await _context.FillRectAsync(x, y, wdt, hgt);
-                
-                // Clip so bricks don't spill out
-                await _context.BeginPathAsync();
-                await _context.RectAsync(x, y, wdt, hgt);
-                await _context.ClipAsync();
-
-                // Draw brick pattern with individual lines to avoid overlapping stroke darkness
-                await _context.SetStrokeStyleAsync("#3a3c3f");
-                await _context.SetLineWidthAsync(2);
-                await _context.BeginPathAsync();
-                
-                // Horizontal lines
-                for (int by = (int)y; by <= (int)(y + hgt); by += 25)
-                {
-                    await _context.MoveToAsync(x, by);
-                    await _context.LineToAsync(x + wdt, by);
-                }
-                
-                // Vertical lines (staggered)
-                for (int by = (int)y; by < (int)(y + hgt); by += 25)
-                {
-                    var offset = (Math.Abs(by) / 25) % 2 == 0 ? 0 : 12;
-                    for (int bx = (int)x - offset; bx <= (int)(x + wdt) + 25; bx += 25)
-                    {
-                        await _context.MoveToAsync(bx, by);
-                        await _context.LineToAsync(bx, by + 25);
-                    }
-                }
-                await _context.StrokeAsync();
-                
-                await _context.RestoreAsync(); // restore from clip
-            }
-            else 
-            {
-                await _context.SetFillStyleAsync("#555555");
-                await _context.FillRectAsync(x, y, wdt, hgt);
-            }
-        }
-
-        // draw powerups
-        foreach (var p in GameController.GetPowerups())
-        {
-            if (p.loc == null || p.died) continue;
-            var pulse = _highQualityTextures ? Math.Abs(Math.Sin(DateTime.Now.TimeOfDay.TotalSeconds * 5)) * 3 : 0;
-            
-            await _context.SetFillStyleAsync("gold");
-            await _context.BeginPathAsync();
-            await _context.ArcAsync(p.loc.X, p.loc.Y, 8 + pulse, 0, Math.PI * 2);
-            await _context.FillAsync();
-
-            if (_highQualityTextures)
-            {
-                await _context.SetFillStyleAsync("yellow");
-                await _context.BeginPathAsync();
-                await _context.ArcAsync(p.loc.X, p.loc.Y, 4, 0, Math.PI * 2);
-                await _context.FillAsync();
-            }
-        }
-
-        // draw snakes (smoothed body + head, death animation)
-        foreach (var s in GameController.GetSnakes())
-        {
-            if (s.dc == true) continue;
-
-            var color = _colors[s.snake % _colors.Length];
-
-            if (s.alive == true) 
-            {
-                // Clear any old death animations if the snake respawned with the same ID
-                _deathAnimations.Remove(s.snake);
-            }
-            else if (s.died == true && !_deathAnimations.ContainsKey(s.snake))
-            {
-                _deathAnimations[s.snake] = new DeathAnim 
-                { 
-                    ElapsedSeconds = 0.0, 
-                    Path = s.body?.ToList() ?? new List<Point2D>(),
-                    Color = color
-                };
-            }
-
-            if (s.alive != true || _deathAnimations.ContainsKey(s.snake)) continue;
-            if (s.body == null || s.body.Count < 2) continue;
-
-            // draw path exactly as the server specifies
-            await _context.SetStrokeStyleAsync(color);
-            await _context.SetLineWidthAsync(10);
-            await _context.SetLineCapAsync(LineCap.Round);
-            await _context.SetLineJoinAsync(LineJoin.Round);
-            await _context.BeginPathAsync();
-            var sf = s.body[0];
-            await _context.MoveToAsync(sf.X, sf.Y);
-            for (int i = 1; i < s.body.Count; i++)
-            {
-                var pt = s.body[i];
-                await _context.LineToAsync(pt.X, pt.Y);
-            }
-            await _context.StrokeAsync();
-
-            // draw head
-            var head = s.body.Last();
-            
-            // optionally draw snake eyes if high quality
-            if (_highQualityTextures)
-            {
-                await _context.SetFillStyleAsync("black");
-                await _context.BeginPathAsync();
-                await _context.ArcAsync(head.X, head.Y, 9, 0, Math.PI * 2);
-                await _context.FillAsync();
-            }
-
-            await _context.SetFillStyleAsync("white");
-            await _context.BeginPathAsync();
-            await _context.ArcAsync(head.X, head.Y, 8, 0, Math.PI * 2);
-            await _context.FillAsync();
-            await _context.SetFillStyleAsync(color);
-            await _context.BeginPathAsync();
-            await _context.ArcAsync(head.X, head.Y, 6, 0, Math.PI * 2);
-            await _context.FillAsync();
-
-            if (!string.IsNullOrEmpty(s.name))
-            {
-                await _context.SetFillStyleAsync("white");
-                await _context.SetFontAsync("bold 14px Arial");
-                await _context.FillTextAsync($"{s.name}: {s.score}", head.X + 12, head.Y - 12);
-            }
-        }
-
-        // process and draw death animations independently
-        var oldGhosts = new List<int>();
-        foreach (var kvp in _deathAnimations)
-        {
-            var id = kvp.Key;
-            var anim = kvp.Value;
-            if (anim.IsFinished) 
-            {
-                // Purge if the snake is no longer in the active list (e.g. disconnected)
-                if (!GameController.GetSnakes().Any(s => s.snake == id)) 
-                {
-                    oldGhosts.Add(id);
-                }
+                if (!GameController.GetSnakes().Any(s => s.Id == id))
+                    finished.Add(id);
                 continue;
             }
+
             var path = anim.Path;
-            if (path == null || path.Count < 2)
-            {
-                anim.IsFinished = true;
-                continue;
-            }
+            if (path == null || path.Count < 2) { anim.IsFinished = true; continue; }
 
-            var head = path.Last();
-            
-            // Calculate total length
             double totalLength = 0;
             var lengths = new List<double>();
             for (int i = 0; i < path.Count - 1; i++)
             {
                 var dx = path[i + 1].X - path[i].X;
                 var dy = path[i + 1].Y - path[i].Y;
-                var dist = Math.Sqrt(dx * dx + dy * dy);
-                lengths.Add(dist);
-                totalLength += dist;
+                lengths.Add(Math.Sqrt(dx * dx + dy * dy));
+                totalLength += lengths[^1];
             }
-            
-            // Explosion settings: 1 bit = 10 units of distance, explodes every 0.05s
-            double bitDistance = 20.0;
-            double explosionDelaySeconds = 0.05;
-            double explosionSpeed = bitDistance / explosionDelaySeconds; // units per second
-            
+
+            double explosionSpeed = BitDistance / ExplosionDelay;
             double explodedLength = anim.ElapsedSeconds * explosionSpeed;
             double currentDist = 0;
-            
-            // Draw the unexploded body backwards from the tail to the explosion front
-            await _context.SetStrokeStyleAsync(anim.Color);
-            await _context.SetLineWidthAsync(10);
+
+            // Remaining body
+            await _context!.SetStrokeStyleAsync(anim.Color);
+            await _context.SetLineWidthAsync(SnakeWidth);
             await _context.SetLineCapAsync(LineCap.Round);
             await _context.SetLineJoinAsync(LineJoin.Round);
             await _context.BeginPathAsync();
-            
+
             bool moved = false;
             for (int i = 0; i < path.Count - 1; i++)
             {
                 var segLen = lengths[i];
-                var segDistStart = totalLength - currentDist - segLen; // dist from head to path[i+1]
-                var segDistEnd = totalLength - currentDist;            // dist from head to path[i]
+                var segDistEnd = totalLength - currentDist;
 
-                if (segDistEnd > explodedLength) // path[i] is unexploded
+                if (segDistEnd > explodedLength)
                 {
-                    if (!moved) 
-                    {
-                        await _context.MoveToAsync(path[i].X, path[i].Y);
-                        moved = true;
-                    }
-                    
-                    if (segDistStart > explodedLength) // path[i+1] is also unexploded
-                    {
-                        await _context.LineToAsync(path[i+1].X, path[i+1].Y);
-                    }
-                    else // Explosion splits this segment
+                    if (!moved) { await _context.MoveToAsync(path[i].X, path[i].Y); moved = true; }
+                    if (segDistEnd - segLen > explodedLength)
+                        await _context.LineToAsync(path[i + 1].X, path[i + 1].Y);
+                    else
                     {
                         var t = segLen > 0.001 ? (segDistEnd - explodedLength) / segLen : 0;
-                        var endX = path[i].X + (path[i+1].X - path[i].X) * t;
-                        var endY = path[i].Y + (path[i+1].Y - path[i].Y) * t;
-                        await _context.LineToAsync(endX, endY);
-                        break; // Nothing closer to the head is unexploded
+                        await _context.LineToAsync(
+                            path[i].X + (path[i + 1].X - path[i].X) * t,
+                            path[i].Y + (path[i + 1].Y - path[i].Y) * t);
+                        break;
                     }
                 }
                 currentDist += segLen;
             }
-            if (moved)
-            {
-                await _context.StrokeAsync();
-            }
+            if (moved) await _context.StrokeAsync();
 
-            currentDist = 0; // reset for particles pass
-
-            // Draw chain explosions along the body segments backwards
+            // Explosion particles
+            currentDist = 0;
             for (int i = path.Count - 1; i > 0; i--)
             {
                 var segLen = lengths[i - 1];
-                double steps = Math.Max(1, Math.Ceiling(segLen / bitDistance)); 
-                
+                double steps = Math.Max(1, Math.Ceiling(segLen / BitDistance));
                 for (int j = 0; j <= steps; j++)
                 {
                     var t = j / steps;
-                    var ptDist = currentDist + (segLen * t); // distance from head
-                    
-                    var bitDetonationTime = ptDist / explosionSpeed;
-                    var timeSinceExplosion = anim.ElapsedSeconds - bitDetonationTime;
-                    
-                    if (timeSinceExplosion >= 0 && timeSinceExplosion <= 0.6) // 0.6s particle lifespan
+                    var ptDist = currentDist + segLen * t;
+                    var timeSinceExplosion = anim.ElapsedSeconds - ptDist / explosionSpeed;
+
+                    if (timeSinceExplosion >= 0 && timeSinceExplosion <= ParticleLifespan)
                     {
                         var bx = path[i].X + (path[i - 1].X - path[i].X) * t;
                         var by = path[i].Y + (path[i - 1].Y - path[i].Y) * t;
-                        
-                        var bAlpha = Math.Max(0, 1.0 - (timeSinceExplosion / 0.6));
-                        var baseRadius = ptDist < bitDistance ? 20 : 5; // Head explosion is bigger
-                        var expandFactor = ptDist < bitDistance ? 60 : 25; // Expand further if head
-                        var bRadius = baseRadius + (timeSinceExplosion / 0.6) * expandFactor;
-                        
+                        var bAlpha = Math.Max(0, 1.0 - timeSinceExplosion / ParticleLifespan);
+                        var baseRadius = ptDist < BitDistance ? 10 : 3;
+                        var expandFactor = ptDist < BitDistance ? 25 : 12;
+                        var bRadius = baseRadius + timeSinceExplosion / ParticleLifespan * expandFactor;
+
                         await _context.SetGlobalAlphaAsync((float)bAlpha);
                         await _context.SetFillStyleAsync(anim.Color);
                         await _context.BeginPathAsync();
@@ -798,27 +731,169 @@
                 }
                 currentDist += segLen;
             }
-            
-            await _context.SetGlobalAlphaAsync(1.0f); // Reset alpha
+            await _context.SetGlobalAlphaAsync(1.0f);
 
-            // Advance frame time (16ms typical 60fps)
-            anim.ElapsedSeconds += 0.016; 
-            
-            // allow full cleanup when wave has passed body by ~1 second
-            var timeToFinishSnake = totalLength / explosionSpeed;
-            if (anim.ElapsedSeconds > timeToFinishSnake + 1.0) 
-            {
+            anim.ElapsedSeconds += elapsed;
+            if (anim.ElapsedSeconds > totalLength / explosionSpeed + 1.0)
                 anim.IsFinished = true;
-            }
         }
-        foreach (var id in oldGhosts)
-        {
+        foreach (var id in finished)
             _deathAnimations.Remove(id);
-        }
-        
-        await _context.RestoreAsync();
-        
-        await _context.EndBatchAsync();
     }
 
+    private async Task DrawWalls()
+    {
+        await _context!.SetFillStyleAsync(_highQualityTextures ? "#2a2c2f" : "#222222");
+        foreach (var w in GameController.GetWalls())
+        {
+            if (w.Point1 == null || w.Point2 == null) continue;
+            var (x, y, wdt, hgt) = WallRect(w);
+            await _context.FillRectAsync(x - 2, y - 2, wdt + 4, hgt + 4);
+        }
+
+        foreach (var w in GameController.GetWalls())
+        {
+            if (w.Point1 == null || w.Point2 == null) continue;
+            var (x, y, wdt, hgt) = WallRect(w);
+
+            if (_highQualityTextures)
+            {
+                await _context.SaveAsync();
+                await _context.SetFillStyleAsync("#65696d");
+                await _context.FillRectAsync(x, y, wdt, hgt);
+                await _context.BeginPathAsync();
+                await _context.RectAsync(x, y, wdt, hgt);
+                await _context.ClipAsync();
+
+                await _context.SetStrokeStyleAsync("#3a3c3f");
+                await _context.SetLineWidthAsync(2);
+                await _context.BeginPathAsync();
+                for (int by = (int)y + BrickSize; by < (int)(y + hgt); by += BrickSize)
+                {
+                    await _context.MoveToAsync(x, by);
+                    await _context.LineToAsync(x + wdt, by);
+                }
+                for (int by = (int)y; by < (int)(y + hgt); by += BrickSize)
+                {
+                    var offset = (Math.Abs(by) / BrickSize) % 2 == 0 ? 0 : 12;
+                    for (int bx = (int)x + BrickSize - offset; bx < (int)(x + wdt); bx += BrickSize)
+                    {
+                        await _context.MoveToAsync(bx, by);
+                        await _context.LineToAsync(bx, by + BrickSize);
+                    }
+                }
+                await _context.StrokeAsync();
+                await _context.RestoreAsync();
+            }
+            else
+            {
+                await _context.SetFillStyleAsync("#555555");
+                await _context.FillRectAsync(x, y, wdt, hgt);
+            }
+        }
+    }
+
+    private static (double x, double y, double w, double h) WallRect(Wall wall)
+    {
+        var x = (double)Math.Min(wall.Point1!.X, wall.Point2!.X) - WallHalfWidth;
+        var y = (double)Math.Min(wall.Point1.Y, wall.Point2.Y) - WallHalfWidth;
+        var wdt = (double)Math.Abs(wall.Point1.X - wall.Point2.X);
+        var hgt = (double)Math.Abs(wall.Point1.Y - wall.Point2.Y);
+        if (wdt == 0) { wdt = WallThickness; hgt += WallThickness; }
+        else { hgt = WallThickness; wdt += WallThickness; }
+        return (x, y, wdt, hgt);
+    }
+
+    private async Task DrawPowerups()
+    {
+        var now = DateTime.UtcNow;
+        foreach (var p in GameController.GetPowerups())
+        {
+            if (p.Location == null || p.Died) continue;
+            var pulse = _highQualityTextures ? Math.Abs(Math.Sin(now.TimeOfDay.TotalSeconds * 5)) * 3 : 0;
+
+            await _context!.SetFillStyleAsync("gold");
+            await _context.BeginPathAsync();
+            await _context.ArcAsync(p.Location.X, p.Location.Y, 8 + pulse, 0, Math.PI * 2);
+            await _context.FillAsync();
+
+            if (_highQualityTextures)
+            {
+                await _context.SetFillStyleAsync("yellow");
+                await _context.BeginPathAsync();
+                await _context.ArcAsync(p.Location.X, p.Location.Y, 4, 0, Math.PI * 2);
+                await _context.FillAsync();
+            }
+        }
+    }
+
+    private async Task DrawSnakes()
+    {
+        var playerId = GameController.GetPlayerSnake()?.Id;
+        foreach (var s in GameController.GetSnakes())
+        {
+            if (s.Disconnected == true) continue;
+            if (s.Alive != true) continue;
+            if (_deathAnimations.ContainsKey(s.Id)) continue;
+            if (s.Id == playerId && !_spawnSafe) continue;
+
+            var body = s.Body;
+            if (body == null || body.Count < 2) continue;
+            var color = _colors[s.Id % _colors.Length];
+
+            // Body
+            await _context!.SetStrokeStyleAsync(color);
+            await _context.SetLineWidthAsync(SnakeWidth);
+            await _context.SetLineCapAsync(LineCap.Round);
+            await _context.SetLineJoinAsync(LineJoin.Round);
+            await _context.BeginPathAsync();
+            await _context.MoveToAsync(body[0].X, body[0].Y);
+            for (int i = 1; i < body.Count; i++)
+                await _context.LineToAsync(body[i].X, body[i].Y);
+            await _context.StrokeAsync();
+
+            // Head
+            var head = body[^1];
+            if (_highQualityTextures)
+            {
+                await _context.SetFillStyleAsync("black");
+                await _context.BeginPathAsync();
+                await _context.ArcAsync(head.X, head.Y, HeadOuterRadius, 0, Math.PI * 2);
+                await _context.FillAsync();
+            }
+            await _context.SetFillStyleAsync("white");
+            await _context.BeginPathAsync();
+            await _context.ArcAsync(head.X, head.Y, HeadMiddleRadius, 0, Math.PI * 2);
+            await _context.FillAsync();
+            await _context.SetFillStyleAsync(color);
+            await _context.BeginPathAsync();
+            await _context.ArcAsync(head.X, head.Y, HeadInnerRadius, 0, Math.PI * 2);
+            await _context.FillAsync();
+
+            // Nametag
+            if (!string.IsNullOrEmpty(s.Name))
+            {
+                await _context.SetFillStyleAsync("white");
+                await _context.SetFontAsync("bold 14px Arial");
+                await _context.FillTextAsync($"{s.Name}: {s.Score ?? 0}", head.X + 12, head.Y - 12);
+            }
+        }
+
+        // Create death animations for ANY snake that just died (not just the player)
+        foreach (var s in GameController.GetSnakes())
+        {
+            if (s.Died == true && !_deathAnimations.ContainsKey(s.Id))
+            {
+                _deathAnimations[s.Id] = new DeathAnim
+                {
+                    Path = s.Body?.ToList() ?? new List<Point2D>(),
+                    Color = _colors[s.Id % _colors.Length]
+                };
+            }
+            else if (s.Alive == true)
+            {
+                _deathAnimations.Remove(s.Id);
+            }
+        }
+    }
 }

@@ -1,13 +1,48 @@
-window.initRenderJS = (instance) => {
-    window.theInstance = instance;
+let instance = null;
+let canvasEl = null;
+
+window.initRenderJS = (dotnetRef) => {
+    instance = dotnetRef;
+    window.theInstance = dotnetRef;
+
+    ensureCanvas();
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
 };
 
-document.addEventListener('keydown', function (event)
-{
-    // Optionally log the key for testing
-    console.log('Key pressed:', event.key);
+window.getViewportSize = () => {
+    ensureCanvas();
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    if (canvasEl && (canvasEl.width !== w || canvasEl.height !== h)) {
+        canvasEl.width = w;
+        canvasEl.height = h;
+    }
+    return [w, h];
+};
 
-    // Call the C# method and pass the key pressed
-    theInstance.invokeMethodAsync('HandleKeyPress', event.key);
+function resizeCanvas() {
+    ensureCanvas();
+    if (!canvasEl) return;
+    canvasEl.width = window.innerWidth;
+    canvasEl.height = window.innerHeight;
+}
 
-});
+function ensureCanvas() {
+    if (!canvasEl) {
+        canvasEl = document.querySelector('#snakeCanvas canvas');
+    }
+}
+
+if (!window.snakeKeyHandlerAttached) {
+    document.addEventListener('keydown', function (event) {
+        if (window.theInstance) {
+            var cmdKeys = ["w", "a", "s", "d", "ArrowUp", "ArrowLeft", "ArrowDown", "ArrowRight"];
+            if (cmdKeys.includes(event.key)) {
+                event.preventDefault();
+            }
+            window.theInstance.invokeMethodAsync('HandleKeyPress', event.key);
+        }
+    });
+    window.snakeKeyHandlerAttached = true;
+}
