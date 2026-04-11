@@ -315,6 +315,11 @@
     private int? _centerTargetSnakeId;
     private int _frozenCameraX;
     private int _frozenCameraY;
+    private string? _pendingMoveCmd;
+    private static readonly Dictionary<string, string> _opposites = new()
+    {
+        ["up"] = "down", ["down"] = "up", ["left"] = "right", ["right"] = "left"
+    };
 
     // ==================== Inner Types ====================
 
@@ -372,7 +377,31 @@
             "d" or "arrowright" => "right",
             _ => null
         };
-        if (cmd != null) _ = GameController.SendMoveAsync(cmd);
+        if (cmd == null) return;
+
+        // Reject the move if it would reverse the snake's actual travel direction.
+        // Uses the real body heading so rapid key spam (left → up → right) can't sneak a reversal.
+        var actualDir = GetSnakeHeading();
+        if (actualDir != null && _opposites.TryGetValue(cmd, out var opp) && opp == actualDir)
+            return;
+
+        // Buffer one command per render frame — only the last valid press is sent.
+        _pendingMoveCmd = cmd;
+    }
+
+    /// <summary>Returns the snake's current travel direction based on its body segments.</summary>
+    private string? GetSnakeHeading()
+    {
+        var snake = GameController.GetPlayerSnake();
+        if (snake?.Body == null || snake.Body.Count < 2) return null;
+        var head = snake.Body[^1];
+        var neck = snake.Body[^2];
+        var dx = head.X - neck.X;
+        var dy = head.Y - neck.Y;
+        if (dx == 0 && dy == 0) return null;
+        return Math.Abs(dx) > Math.Abs(dy)
+            ? (dx > 0 ? "right" : "left")
+            : (dy > 0 ? "down" : "up");
     }
 
     // ==================== Connection ====================
@@ -384,6 +413,7 @@
         _spawnSafe = false;
         _rerolling = false;
         _sidebarOpen = false;
+        _pendingMoveCmd = null;
         GameController.Disconnect();
         try
         {
@@ -409,13 +439,26 @@
         await ConnectInternal();
     }
 
-    private void Respawn()
+    private async Task Respawn()
     {
         try { _rerollCts?.Cancel(); } catch { }
         _showDeathScreen = false;
-        _spawnSafe = false;
+        _spawnSafe = true;
         _rerolling = false;
-        // Server already auto-respawned — just clear the death overlay
+        _pendingMoveCmd = null;
+        // Reconnect immediately so the server assigns a fresh alive snake
+        // instead of waiting for the server's RespawnRate (200 frames = 4s).
+        GameController.Disconnect();
+        try
+        {
+            await GameController.ConnectAsync(Host, Port, PlayerName);
+            _status = "Connected";
+        }
+        catch (Exception ex)
+        {
+            _status = "Error: " + ex.Message;
+        }
+        StateHasChanged();
     }
 
     /// <summary>Reconnects without touching death-screen state. Used by spawn reroll.</summary>
@@ -623,6 +666,14 @@
             {
                 try
                 {
+                    // Send at most one buffered move command per render frame
+                    var move = _pendingMoveCmd;
+                    if (move != null)
+                    {
+                        _pendingMoveCmd = null;
+                        _ = GameController.SendMoveAsync(move);
+                    }
+
                     await DrawFrame();
                     if (++tick % 6 == 0)
                     {
@@ -858,10 +909,10 @@
                     occupied.Add((startCx + c, startCy + r));
         }
 
-        // ── Step 2: Dark underpaint — each cell expanded by 3px on exposed sides ──
-        // This creates a continuous outline naturally, no edge strips needed.
-        const int border = 3;
-        await ctx.SetFillStyleAsync("#1a1c1f");
+        // ── Step 2: Mortar fill — each cell expanded on exposed sides to form the wall border ──
+        // The border IS mortar, not a separate outline. No doubling.
+        const int border = 2;
+        await ctx.SetFillStyleAsync("#2e3033");
         foreach (var (cx, cy) in occupied)
         {
             double px = cx * bs, py = cy * bs;
@@ -876,47 +927,36 @@
             await ctx.FillRectAsync(ex, ey, ew, eh);
         }
 
-        // ── Step 3: Mortar base — fill each cell with mortar color ──
-        await ctx.SetFillStyleAsync("#3a3c3f");
-        foreach (var (cx, cy) in occupied)
-            await ctx.FillRectAsync(cx * bs, cy * bs, bs, bs);
-
-        // ── Step 4: Draw brick faces with mortar insets + running bond stagger ──
-        // FM = floor-mod, always returns 0..(b-1) even for negative coords
+        // ── Step 3: Draw brick faces with running bond ──
+        // Mortar is already painted; bricks are inset uniformly on all sides.
         static int FM(int a, int b) => ((a % b) + b) % b;
-        const int m = 1; // mortar thickness on each side
+        const int m = 1;
 
         foreach (var (cx, cy) in occupied)
         {
             double px = cx * bs, py = cy * bs;
-            bool nT = occupied.Contains((cx, cy - 1));
-            bool nB = occupied.Contains((cx, cy + 1));
-            bool nL = occupied.Contains((cx - 1, cy));
-            bool nR = occupied.Contains((cx + 1, cy));
 
-            // Every cell gets a horizontal mortar inset on interior top/bottom edges
-            int topInset = nT ? m : 0;
-            int botInset = nB ? m : 0;
+            // Uniform mortar inset on all sides — horizontal courses always visible
+            int topInset = m;
+            int botInset = m;
 
-            // Vertical mortar: running bond — even rows split at FM(cx,2)==1, odd at FM(cx,2)==0
+            // Running bond: even rows have vertical joint at even cx, odd rows at odd cx
             bool evenRow = FM(cy, 2) == 0;
-            bool jointLeft = evenRow ? FM(cx, 2) == 0 : FM(cx, 2) == 1;
-            bool jointRight = evenRow ? FM(cx, 2) == 1 : FM(cx, 2) == 0;
-            // Only inset if there's a neighbor to create a joint with
-            int leftInset = (nL && jointLeft) ? m : 0;
-            int rightInset = (nR && jointRight) ? m : 0;
+            bool isJoint = evenRow ? FM(cx, 2) == 0 : FM(cx, 2) == 1;
+            int leftInset = isJoint ? m : 0;
+            int rightInset = isJoint ? 0 : m;
 
             double fx = px + leftInset;
             double fy = py + topInset;
             double fw = bs - leftInset - rightInset;
             double fh = bs - topInset - botInset;
 
-            // Alternate shade per brick for subtle depth
+            // Alternate shade per brick
             int brickCol = evenRow
                 ? (int)Math.Floor(cx / 2.0)
                 : (int)Math.Floor((cx - 1) / 2.0);
             int shade = FM(brickCol + cy, 2);
-            await ctx.SetFillStyleAsync(shade == 0 ? "#6d7175" : "#62666a");
+            await ctx.SetFillStyleAsync(shade == 0 ? "#787c80" : "#6a6e72");
             await ctx.FillRectAsync(fx, fy, fw, fh);
         }
     }
