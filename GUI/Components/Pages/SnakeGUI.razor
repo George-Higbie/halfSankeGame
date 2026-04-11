@@ -548,8 +548,51 @@
             var explodedLength = totalLength * anim.Progress;
             double currentDist = 0;
             
+            // Draw the unexploded body backwards from the tail to the explosion front
+            await _context.SetStrokeStyleAsync(anim.Color);
+            await _context.SetLineWidthAsync(10);
+            await _context.SetLineCapAsync(LineCap.Round);
+            await _context.SetLineJoinAsync(LineJoin.Round);
+            await _context.BeginPathAsync();
+            
+            bool moved = false;
+            for (int i = 0; i < path.Count - 1; i++)
+            {
+                var segLen = lengths[i];
+                var segDistStart = totalLength - currentDist - segLen;
+                var segDistEnd = totalLength - currentDist; // distance of path[i+1] from head
+
+                if (segDistEnd > explodedLength) // this point is beyond explosion
+                {
+                    if (!moved) 
+                    {
+                        double startX = path[i].X;
+                        double startY = path[i].Y;
+                        
+                        // If explosion splits this segment
+                        if (segDistStart <= explodedLength)
+                        {
+                            var t = (explodedLength - segDistStart) / segLen;
+                            startX = path[i].X + (path[i+1].X - path[i].X) * t;
+                            startY = path[i].Y + (path[i+1].Y - path[i].Y) * t;
+                        }
+                        
+                        await _context.MoveToAsync(startX, startY);
+                        moved = true;
+                    }
+                    await _context.LineToAsync(path[i+1].X, path[i+1].Y);
+                }
+                currentDist += segLen;
+            }
+            if (moved)
+            {
+                await _context.StrokeAsync();
+            }
+
+            currentDist = 0; // reset for particles pass
+            
             // Draw head explosion: starts immediately and fades
-            var headAlpha = Math.Max(0, 1.0 - (anim.Progress * 1.5));
+            var headAlpha = Math.Max(0, 1.0 - (anim.Progress * 2.0));
             var headRadius = 20 + Math.Min(anim.Progress * 80, 50);
             if (headAlpha > 0)
             {
@@ -564,16 +607,15 @@
             for (int i = path.Count - 1; i > 0; i--)
             {
                 var segLen = lengths[i - 1];
-                double steps = Math.Ceiling(segLen / 20.0);
+                double steps = Math.Max(1, Math.Ceiling(segLen / 20.0)); // bit by bit
                 
                 for (int j = 0; j <= steps; j++)
                 {
                     var t = j / steps;
                     var ptDist = currentDist + (segLen * t); // distance from head
                     
-                    // The explosion front travels along the snake
                     var explosionFront = anim.Progress * totalLength;
-                    var timeSinceExplosion = (explosionFront - ptDist) / 50.0; // speed tuning
+                    var timeSinceExplosion = (explosionFront - ptDist) / 100.0; // speed tuning
                     
                     if (timeSinceExplosion > 0 && timeSinceExplosion < 1.0)
                     {
@@ -581,7 +623,7 @@
                         var by = path[i].Y + (path[i - 1].Y - path[i].Y) * t;
                         
                         var bAlpha = Math.Max(0, 1.0 - timeSinceExplosion);
-                        var bRadius = 5 + timeSinceExplosion * 20;
+                        var bRadius = 5 + timeSinceExplosion * 25;
                         await _context.SetGlobalAlphaAsync((float)bAlpha);
                         await _context.SetFillStyleAsync(anim.Color);
                         await _context.BeginPathAsync();
@@ -594,7 +636,8 @@
             
             await _context.SetGlobalAlphaAsync(1.0f); // Reset alpha
 
-            anim.Progress += 0.015; // smooth pacing
+            // Adjust progress speed to account for ~0.05s per bit. Slower explosions
+            anim.Progress += 0.008; // slower pacing
             if (anim.Progress >= 1.5) // allow fade out
             {
                 completedAnims.Add(id);
