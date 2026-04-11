@@ -474,7 +474,7 @@
                 };
             }
 
-            if (!s.alive) continue;
+            if (!s.alive || _deathAnimations.ContainsKey(s.snake)) continue;
             if (s.body == null || s.body.Count < 2) continue;
 
             // draw path exactly as the server specifies
@@ -567,28 +567,29 @@
             for (int i = 0; i < path.Count - 1; i++)
             {
                 var segLen = lengths[i];
-                var segDistStart = totalLength - currentDist - segLen;
-                var segDistEnd = totalLength - currentDist; // distance of path[i+1] from head
+                var segDistStart = totalLength - currentDist - segLen; // dist from head to path[i+1]
+                var segDistEnd = totalLength - currentDist;            // dist from head to path[i]
 
-                if (segDistEnd > explodedLength) // this point is beyond explosion
+                if (segDistEnd > explodedLength) // path[i] is unexploded
                 {
                     if (!moved) 
                     {
-                        double startX = path[i].X;
-                        double startY = path[i].Y;
-                        
-                        // If explosion splits this segment
-                        if (segDistStart <= explodedLength)
-                        {
-                            var t = (explodedLength - segDistStart) / segLen;
-                            startX = path[i].X + (path[i+1].X - path[i].X) * t;
-                            startY = path[i].Y + (path[i+1].Y - path[i].Y) * t;
-                        }
-                        
-                        await _context.MoveToAsync(startX, startY);
+                        await _context.MoveToAsync(path[i].X, path[i].Y);
                         moved = true;
                     }
-                    await _context.LineToAsync(path[i+1].X, path[i+1].Y);
+                    
+                    if (segDistStart > explodedLength) // path[i+1] is also unexploded
+                    {
+                        await _context.LineToAsync(path[i+1].X, path[i+1].Y);
+                    }
+                    else // Explosion splits this segment
+                    {
+                        var t = (segDistEnd - explodedLength) / segLen;
+                        var endX = path[i].X + (path[i+1].X - path[i].X) * t;
+                        var endY = path[i].Y + (path[i+1].Y - path[i].Y) * t;
+                        await _context.LineToAsync(endX, endY);
+                        break; // Nothing closer to the head is unexploded
+                    }
                 }
                 currentDist += segLen;
             }
