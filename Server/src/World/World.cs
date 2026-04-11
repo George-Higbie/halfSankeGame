@@ -757,8 +757,10 @@ public class World
 
 	private (Vector2D tail, Vector2D head) RandomSnakeSpawn()
 	{
-		const double clearance = 300.0;
+		const double aheadClearance = 150.0;
 		const double step = 30.0;
+		const double overlapRadius = 30.0;
+		const double headDangerZone = 150.0;
 		const int maxAttempts = 200;
 		for (int attempt = 0; attempt < maxAttempts; attempt++)
 		{
@@ -767,9 +769,10 @@ public class World
 			Vector2D dir = h - t;
 			dir.Normalize();
 
-			// Check the entire corridor from head to clearance distance ahead
 			bool clear = true;
-			for (double d = 0; d <= clearance && clear; d += step)
+
+			// 1) 150 units clear ahead of spawn (walls only)
+			for (double d = 0; d <= aheadClearance && clear; d += step)
 			{
 				Vector2D checkPoint = h + dir * d;
 				foreach (Wall wall in Walls.Values)
@@ -780,27 +783,51 @@ public class World
 						break;
 					}
 				}
-				if (!clear) break;
-				foreach (Snake s in Snakes.Values)
+			}
+			if (!clear) continue;
+
+			// 2) No overlap with existing snake bodies at spawn location
+			foreach (Snake s in Snakes.Values)
+			{
+				if (!s.Alive) continue;
+				foreach (var (v1, v2) in s.Segments())
 				{
-					if (!s.Alive) continue;
-					foreach (var (v1, v2) in s.Segments())
+					double segMinX = Math.Min(v1.X_f, v2.X_f) - overlapRadius;
+					double segMaxX = Math.Max(v1.X_f, v2.X_f) + overlapRadius;
+					double segMinY = Math.Min(v1.Y_f, v2.Y_f) - overlapRadius;
+					double segMaxY = Math.Max(v1.Y_f, v2.Y_f) + overlapRadius;
+					if (h.X_f >= segMinX && h.X_f <= segMaxX &&
+					    h.Y_f >= segMinY && h.Y_f <= segMaxY)
 					{
-						double segMinX = Math.Min(v1.X_f, v2.X_f) - 30.0;
-						double segMaxX = Math.Max(v1.X_f, v2.X_f) + 30.0;
-						double segMinY = Math.Min(v1.Y_f, v2.Y_f) - 30.0;
-						double segMaxY = Math.Max(v1.Y_f, v2.Y_f) + 30.0;
-						if (checkPoint.X_f >= segMinX && checkPoint.X_f <= segMaxX &&
-						    checkPoint.Y_f >= segMinY && checkPoint.Y_f <= segMaxY)
-						{
-							clear = false;
-							break;
-						}
+						clear = false;
+						break;
 					}
-					if (!clear) break;
+				}
+				if (!clear) break;
+			}
+			if (!clear) continue;
+
+			// 3) Not within 150 units ahead of any other alive snake's head
+			foreach (Snake s in Snakes.Values)
+			{
+				if (!s.Alive) continue;
+				Vector2D sDir = s.direction;
+				if (sDir == null) continue;
+				Vector2D toSpawn = h - s.Head;
+				double dot = toSpawn.X_f * sDir.X_f + toSpawn.Y_f * sDir.Y_f;
+				if (dot > 0 && dot <= headDangerZone)
+				{
+					double cross = Math.Abs(toSpawn.X_f * sDir.Y_f - toSpawn.Y_f * sDir.X_f);
+					if (cross < overlapRadius)
+					{
+						clear = false;
+						break;
+					}
 				}
 			}
-			if (clear) return (t, h);
+			if (!clear) continue;
+
+			return (t, h);
 		}
 		// Fallback: best-effort spawn if no perfect spot found
 		Vector2D fallbackT = RandomLocation(120f);
