@@ -550,43 +550,51 @@
             
             // Draw head explosion: starts immediately and fades
             var headAlpha = Math.Max(0, 1.0 - (anim.Progress * 1.5));
-            var headRadius = 20 + anim.Progress * 80;
-            await _context.SetGlobalAlphaAsync((float)headAlpha);
-            await _context.SetFillStyleAsync(anim.Color);
-            await _context.BeginPathAsync();
-            await _context.ArcAsync(head.X, head.Y, headRadius, 0, Math.PI * 2);
-            await _context.FillAsync();
+            var headRadius = 20 + Math.Min(anim.Progress * 80, 50);
+            if (headAlpha > 0)
+            {
+                await _context.SetGlobalAlphaAsync((float)headAlpha);
+                await _context.SetFillStyleAsync(anim.Color);
+                await _context.BeginPathAsync();
+                await _context.ArcAsync(head.X, head.Y, headRadius, 0, Math.PI * 2);
+                await _context.FillAsync();
+            }
 
             // Draw chain explosions along the body segments backwards
-            // If the explosion "front" has passed a segment, we draw a fading circle there
             for (int i = path.Count - 1; i > 0; i--)
             {
                 var segLen = lengths[i - 1];
-                currentDist += segLen;
-                var segProgress = Math.Min(1.0, Math.Max(0.0, (anim.Progress - (totalLength - currentDist) / totalLength) * 2));
+                double steps = Math.Ceiling(segLen / 20.0);
                 
-                if (segProgress > 0 && segProgress < 1.0)
+                for (int j = 0; j <= steps; j++)
                 {
-                    double steps = Math.Ceiling(segLen / 20.0);
-                    for (int j = 0; j <= steps; j++)
+                    var t = j / steps;
+                    var ptDist = currentDist + (segLen * t); // distance from head
+                    
+                    // The explosion front travels along the snake
+                    var explosionFront = anim.Progress * totalLength;
+                    var timeSinceExplosion = (explosionFront - ptDist) / 50.0; // speed tuning
+                    
+                    if (timeSinceExplosion > 0 && timeSinceExplosion < 1.0)
                     {
-                        var t = j / steps;
                         var bx = path[i].X + (path[i - 1].X - path[i].X) * t;
                         var by = path[i].Y + (path[i - 1].Y - path[i].Y) * t;
                         
-                        var bAlpha = Math.Max(0, 1.0 - segProgress);
-                        var bRadius = 5 + segProgress * 30;
+                        var bAlpha = Math.Max(0, 1.0 - timeSinceExplosion);
+                        var bRadius = 5 + timeSinceExplosion * 20;
                         await _context.SetGlobalAlphaAsync((float)bAlpha);
+                        await _context.SetFillStyleAsync(anim.Color);
                         await _context.BeginPathAsync();
                         await _context.ArcAsync(bx, by, bRadius, 0, Math.PI * 2);
                         await _context.FillAsync();
                     }
                 }
+                currentDist += segLen;
             }
             
             await _context.SetGlobalAlphaAsync(1.0f); // Reset alpha
 
-            anim.Progress += 0.02; // 50 frames to complete
+            anim.Progress += 0.015; // smooth pacing
             if (anim.Progress >= 1.5) // allow fade out
             {
                 completedAnims.Add(id);
