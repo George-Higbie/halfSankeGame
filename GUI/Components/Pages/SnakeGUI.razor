@@ -251,7 +251,6 @@
     {
         _showDeathScreen = false;
         _spawnVerified = false;
-        _deathAnimations.Clear();
         _ = Reconnect();
     }
 
@@ -367,6 +366,7 @@
         public double ElapsedSeconds { get; set; } = 0.0;
         public IReadOnlyList<Point2D> Path { get; set; } = Array.Empty<Point2D>();
         public string Color { get; set; } = "orange";
+        public bool IsFinished { get; set; } = false;
     }
 
     private readonly Dictionary<int, DeathAnim> _deathAnimations = new();
@@ -556,8 +556,12 @@
 
             var color = _colors[s.snake % _colors.Length];
 
-            // draw death animation if this snake died on the last received frame
-            if (s.died == true && !_deathAnimations.ContainsKey(s.snake))
+            if (s.alive == true) 
+            {
+                // Clear any old death animations if the snake respawned with the same ID
+                _deathAnimations.Remove(s.snake);
+            }
+            else if (s.died == true && !_deathAnimations.ContainsKey(s.snake))
             {
                 _deathAnimations[s.snake] = new DeathAnim 
                 { 
@@ -615,15 +619,24 @@
         }
 
         // process and draw death animations independently
-        var completedAnims = new List<int>();
+        var oldGhosts = new List<int>();
         foreach (var kvp in _deathAnimations)
         {
             var id = kvp.Key;
             var anim = kvp.Value;
+            if (anim.IsFinished) 
+            {
+                // Purge if the snake is no longer in the active list (e.g. disconnected)
+                if (!GameController.GetSnakes().Any(s => s.snake == id)) 
+                {
+                    oldGhosts.Add(id);
+                }
+                continue;
+            }
             var path = anim.Path;
             if (path == null || path.Count < 2)
             {
-                completedAnims.Add(id);
+                anim.IsFinished = true;
                 continue;
             }
 
@@ -736,14 +749,14 @@
             var timeToFinishSnake = totalLength / explosionSpeed;
             if (anim.ElapsedSeconds > timeToFinishSnake + 1.0) 
             {
-                completedAnims.Add(id);
+                anim.IsFinished = true;
             }
         }
-        foreach (var id in completedAnims)
+        foreach (var id in oldGhosts)
         {
             _deathAnimations.Remove(id);
         }
-
+        
         await _context.RestoreAsync();
         
         await _context.EndBatchAsync();

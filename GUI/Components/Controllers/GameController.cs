@@ -9,9 +9,14 @@ namespace GUI.Components.Controllers
 {
     public class GameController
     {
-        private readonly ConcurrentDictionary<int, Snake> _snakes = new();
-        private readonly ConcurrentDictionary<int, Wall> _walls = new();
-        private readonly ConcurrentDictionary<int, Powerup> _powerups = new();
+        private ConcurrentDictionary<int, Snake> _snakes = new();
+        private ConcurrentDictionary<int, Wall> _walls = new();
+        private ConcurrentDictionary<int, Powerup> _powerups = new();
+
+        private bool _isInitializing = false;
+        private ConcurrentDictionary<int, Wall> _pendingWalls = new();
+        private int? _pendingPlayerId = null;
+        private int? _pendingWorldSize = null;
 
         public int? PlayerId { get; private set; }
         public int? WorldSize { get; private set; }
@@ -27,10 +32,31 @@ namespace GUI.Components.Controllers
         {
             _network = network;
             // subscribe
-            _network.OnPlayerIdReceived += id => { PlayerId = id; OnStateUpdated?.Invoke(); };
-            _network.OnWorldSizeReceived += ws => { WorldSize = ws; OnStateUpdated?.Invoke(); };
-            _network.OnWallReceived += w => { _walls[w.wall] = w; OnStateUpdated?.Invoke(); };
+            _network.OnPlayerIdReceived += id => { 
+                if (_isInitializing) _pendingPlayerId = id; 
+                else PlayerId = id; 
+                OnStateUpdated?.Invoke(); 
+            };
+            _network.OnWorldSizeReceived += ws => { 
+                if (_isInitializing) _pendingWorldSize = ws; 
+                else WorldSize = ws; 
+                OnStateUpdated?.Invoke(); 
+            };
+            _network.OnWallReceived += w => { 
+                if (_isInitializing) _pendingWalls[w.wall] = w;
+                else _walls[w.wall] = w;
+                OnStateUpdated?.Invoke(); 
+            };
             _network.OnSnakeReceived += s => { 
+                if (_isInitializing) {
+                    _isInitializing = false;
+                    if (_pendingPlayerId.HasValue) PlayerId = _pendingPlayerId;
+                    if (_pendingWorldSize.HasValue) WorldSize = _pendingWorldSize;
+                    _walls = _pendingWalls;
+                    _snakes = new();
+                    _powerups = new();
+                }
+                
                 if (s.dc.HasValue && s.dc.Value && _snakes.ContainsKey(s.snake)) {
                     _snakes.TryRemove(s.snake, out _);
                 } else {
@@ -56,6 +82,15 @@ namespace GUI.Components.Controllers
                 OnStateUpdated?.Invoke(); 
             };
             _network.OnPowerupReceived += p => { 
+                if (_isInitializing) {
+                    _isInitializing = false;
+                    if (_pendingPlayerId.HasValue) PlayerId = _pendingPlayerId;
+                    if (_pendingWorldSize.HasValue) WorldSize = _pendingWorldSize;
+                    _walls = _pendingWalls;
+                    _snakes = new();
+                    _powerups = new();
+                }
+
                 if (p.died && _powerups.ContainsKey(p.power)) {
                     _powerups.TryRemove(p.power, out _);
                 } else {
@@ -79,21 +114,15 @@ namespace GUI.Components.Controllers
 
         public Task ConnectAsync(string host, int port, string name)
         {
-            _snakes.Clear();
-            _walls.Clear();
-            _powerups.Clear();
-            PlayerId = null;
-            WorldSize = null;
+            _isInitializing = true;
+            _pendingPlayerId = null;
+            _pendingWorldSize = null;
+            _pendingWalls = new();
             return _network.ConnectAsync(host, port, name);
         }
 
         public void Disconnect()
         {
-            PlayerId = null;
-            WorldSize = null;
-            _snakes.Clear();
-            _walls.Clear();
-            _powerups.Clear();
             _network.Disconnect();
         }
 
