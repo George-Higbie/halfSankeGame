@@ -66,27 +66,30 @@
     </div>
     }
 
-    @if (_showScoreboard)
-    {
-    <div style="margin-top:12px; border-top:1px solid rgba(255,255,255,0.1); padding-top:10px;">
-        <strong style="font-size:0.85rem; text-transform:uppercase; letter-spacing:1px; opacity:0.7;">Scoreboard</strong>
-        <ul class="scoreboard">
-            @foreach (var s in GameController.GetSnakes().OrderByDescending(x => x.Score ?? 0))
-            {
-                <li @onclick="(() => { _centerTargetSnakeId = s.Id; })">
-                    <span>@(s.Name ?? "?")</span>
-                    <span>@(s.Score ?? 0)</span>
-                </li>
-            }
-        </ul>
-    </div>
-    }
 </div>
 
 @* ── Canvas ── *@
 <div id="snakeCanvas" style="position:fixed; inset:0; z-index:1; background:#7c9c45; overflow:hidden;">
     <BECanvas Width="1920" Height="1080" @ref="_canvasReference"></BECanvas>
 </div>
+
+@* ── Scoreboard Overlay ── *@
+@if (_showScoreboard && GameController.PlayerId.HasValue)
+{
+    var sbStyle = GetScoreboardStyle();
+    <div class="scoreboard-overlay @(sbStyle.dither ? "scoreboard-dithered" : "")" style="opacity: @sbStyle.opacity.ToString("F2");">
+        <strong>SCOREBOARD</strong>
+        <ul>
+            @foreach (var s in GameController.GetSnakes().Where(x => x.Alive == true).OrderByDescending(x => x.Score ?? 0))
+            {
+                <li @onclick="(() => { _centerTargetSnakeId = s.Id; })" class="@(s.Id == GameController.PlayerId ? "self" : "")">
+                    <span>@(s.Name ?? "?")</span>
+                    <span>@(s.Score ?? 0)</span>
+                </li>
+            }
+        </ul>
+    </div>
+}
 
 @* ── Death Overlay ── *@
 @if (_showDeathScreen)
@@ -226,22 +229,55 @@
         margin-bottom: 4px;
         cursor: pointer;
     }
-    .scoreboard {
+    .scoreboard-overlay {
+        position: fixed;
+        top: 12px;
+        left: 12px;
+        z-index: 5;
+        background: rgba(18, 18, 24, 0.75);
+        backdrop-filter: blur(8px);
+        border-radius: 8px;
+        padding: 12px 16px;
+        color: #e0e0e0;
+        font-family: 'Segoe UI', system-ui, sans-serif;
+        font-size: 0.85rem;
+        min-width: 180px;
+    }
+    .scoreboard-overlay strong {
+        display: block;
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        opacity: 0.7;
+        margin-bottom: 8px;
+    }
+    .scoreboard-overlay ul {
         list-style: none;
         padding: 0;
-        margin: 6px 0 0;
+        margin: 0;
     }
-    .scoreboard li {
+    .scoreboard-overlay li {
         display: flex;
         justify-content: space-between;
-        padding: 4px 6px;
+        padding: 3px 6px;
         border-radius: 3px;
         cursor: pointer;
         font-size: 0.82rem;
         transition: background 0.1s;
     }
-    .scoreboard li:hover {
-        background: rgba(255,255,255,0.08);
+    .scoreboard-overlay li:hover {
+        background: rgba(255,255,255,0.1);
+    }
+    .scoreboard-overlay li.self {
+        background: rgba(76,175,80,0.2);
+    }
+    .scoreboard-dithered {
+        -webkit-mask-image: radial-gradient(circle 2px at 6px 6px, black 1px, transparent 1.5px);
+        mask-image: radial-gradient(circle 2px at 6px 6px, black 1px, transparent 1.5px);
+        -webkit-mask-size: 12px 12px;
+        mask-size: 12px 12px;
+        -webkit-mask-repeat: repeat;
+        mask-repeat: repeat;
     }
 
     /* Death overlay */
@@ -344,7 +380,9 @@
     private bool _showDeathScreen;
     private int _frozenCameraX;
     private int _frozenCameraY;
-    private string? _p1PendingMove;
+    private readonly List<string> _p1MoveQueue = new();
+    private readonly object _p1MoveLock = new();
+    private string? _p1LastSentDir;
     private int? _centerTargetSnakeId;
     private volatile bool _p1Ready;
     private readonly CameraState _p1Cam = new();
@@ -356,12 +394,17 @@
     private bool _p2ShowDeath;
     private int _p2FrozenCamX;
     private int _p2FrozenCamY;
-    private string? _p2PendingMove;
+    private readonly List<string> _p2MoveQueue = new();
+    private readonly object _p2MoveLock = new();
+    private string? _p2LastSentDir;
     private volatile bool _p2Ready;
     private readonly CameraState _p2Cam = new();
 
     // Wall cache keyed by controller (walls are static per connection)
     private readonly Dictionary<GameController, HashSet<(int cx, int cy)>> _wallCaches = new();
+
+    // Head screen position for scoreboard dithering
+    private double _p1HeadScreenX, _p1HeadScreenY;
 
     // ==================== UI State ====================
     private string Host { get; set; } = "localhost";
@@ -395,6 +438,28 @@
         public double X, Y;
         public bool Initialized;
         public void Reset() { X = 0; Y = 0; Initialized = false; }
+    }
+
+    private (double opacity, bool dither) GetScoreboardStyle()
+    {
+        // Scoreboard overlay is at top:12, left:12, roughly 200x(rows*24+40)
+        const double sbLeft = 12, sbTop = 12, sbWidth = 200, sbHeight = 200;
+        const double fadeStart = 180;   // start fading when head is this far from scoreboard center
+        const double fadeEnd = 30;      // fully transparent at this distance
+
+        double sbCx = sbLeft + sbWidth / 2;
+        double sbCy = sbTop + sbHeight / 2;
+        double dx = _p1HeadScreenX - sbCx;
+        double dy = _p1HeadScreenY - sbCy;
+        double dist = Math.Sqrt(dx * dx + dy * dy);
+
+        if (dist >= fadeStart) return (1.0, false);
+        if (dist <= fadeEnd)
+            return (0.02, true);
+
+        double t = (fadeStart - dist) / (fadeStart - fadeEnd);
+        double opacity = 1.0 - t * 0.98;
+        return (opacity, t > 0.3);
     }
 
     // ==================== Lifecycle ====================
@@ -464,9 +529,7 @@
         if (p1Cmd != null)
         {
             if (_showDeathScreen || !_p1Ready) return;
-            var heading = GetSnakeHeading(GameController);
-            if (heading != null && _opposites.TryGetValue(p1Cmd, out var opp) && opp == heading) return;
-            Interlocked.Exchange(ref _p1PendingMove, p1Cmd);
+            EnqueueMove(_p1MoveQueue, _p1MoveLock, p1Cmd);
             return;
         }
 
@@ -482,16 +545,12 @@
         if (_splitScreen && _p2Game != null)
         {
             if (_p2ShowDeath || !_p2Ready) return;
-            var h2 = GetSnakeHeading(_p2Game);
-            if (h2 != null && _opposites.TryGetValue(arrowCmd, out var opp2) && opp2 == h2) return;
-            Interlocked.Exchange(ref _p2PendingMove, arrowCmd);
+            EnqueueMove(_p2MoveQueue, _p2MoveLock, arrowCmd);
         }
         else
         {
             if (_showDeathScreen || !_p1Ready) return;
-            var heading = GetSnakeHeading(GameController);
-            if (heading != null && _opposites.TryGetValue(arrowCmd, out var opp) && opp == heading) return;
-            Interlocked.Exchange(ref _p1PendingMove, arrowCmd);
+            EnqueueMove(_p1MoveQueue, _p1MoveLock, arrowCmd);
         }
     }
 
@@ -509,12 +568,60 @@
             : (dy > 0 ? "down" : "up");
     }
 
+    private static void EnqueueMove(List<string> queue, object queueLock, string cmd)
+    {
+        lock (queueLock)
+        {
+            if (queue.Count >= 2) return;
+            if (queue.Count > 0 && queue[^1] == cmd) return;
+            queue.Add(cmd);
+        }
+    }
+
+    private static string? DequeueMove(List<string> queue, object queueLock, GameController gc, ref string? lastSentDir)
+    {
+        lock (queueLock)
+        {
+            if (queue.Count == 0) return null;
+
+            var heading = lastSentDir ?? GetSnakeHeading(gc);
+
+            if (queue.Count == 1)
+            {
+                var move = queue[0];
+                queue.RemoveAt(0);
+                if (heading != null && _opposites.TryGetValue(move, out var opp) && opp == heading)
+                    return null;
+                lastSentDir = move;
+                return move;
+            }
+
+            var first = queue[0];
+            var second = queue[1];
+            bool firstIs180 = heading != null && _opposites.TryGetValue(first, out var o1) && o1 == heading;
+            bool secondIs180 = heading != null && _opposites.TryGetValue(second, out var o2) && o2 == heading;
+
+            if (firstIs180 && !secondIs180)
+            {
+                queue.RemoveAt(1);
+                lastSentDir = second;
+                return second;
+            }
+
+            queue.RemoveAt(0);
+            if (firstIs180) return null;
+            lastSentDir = first;
+            return first;
+        }
+    }
+
     // ==================== Connection ====================
 
     private async Task Connect(bool closeSidebar = true)
     {
         _showDeathScreen = false;
-        _p1PendingMove = null;
+        lock (_p1MoveLock) _p1MoveQueue.Clear();
+        _p1LastSentDir = null;
         _p1Ready = false;
         _p1Cam.Reset();
         if (closeSidebar) _sidebarOpen = false;
@@ -541,7 +648,8 @@
     {
         if (_p2Game == null) return;
         _p2ShowDeath = false;
-        _p2PendingMove = null;
+        lock (_p2MoveLock) _p2MoveQueue.Clear();
+        _p2LastSentDir = null;
         _p2Ready = false;
         _p2Cam.Reset();
         _wallCaches.Remove(_p2Game);
@@ -565,7 +673,8 @@
     private void RespawnP1()
     {
         _showDeathScreen = false;
-        _p1PendingMove = null;
+        lock (_p1MoveLock) _p1MoveQueue.Clear();
+        _p1LastSentDir = null;
         _ = GameController.SendMoveAsync("respawn");
         _ = InvokeAsync(StateHasChanged);
     }
@@ -573,7 +682,8 @@
     private void RespawnP2()
     {
         _p2ShowDeath = false;
-        _p2PendingMove = null;
+        lock (_p2MoveLock) _p2MoveQueue.Clear();
+        _p2LastSentDir = null;
         if (_p2Game != null) _ = _p2Game.SendMoveAsync("respawn");
         _ = InvokeAsync(StateHasChanged);
     }
@@ -631,13 +741,13 @@
                 try
                 {
                     // P1 move
-                    var move1 = Interlocked.Exchange(ref _p1PendingMove, null);
+                    var move1 = DequeueMove(_p1MoveQueue, _p1MoveLock, GameController, ref _p1LastSentDir);
                     if (move1 != null) _ = GameController.SendMoveAsync(move1);
 
                     // P2 move
                     if (_splitScreen && _p2Game != null)
                     {
-                        var move2 = Interlocked.Exchange(ref _p2PendingMove, null);
+                        var move2 = DequeueMove(_p2MoveQueue, _p2MoveLock, _p2Game, ref _p2LastSentDir);
                         if (move2 != null) _ = _p2Game.SendMoveAsync(move2);
                     }
 
@@ -774,6 +884,18 @@
         var camX = vx + vw / 2.0 - cam.X;
         var camY = vy + vh / 2.0 - cam.Y;
         await _context.TranslateAsync(camX, camY);
+
+        // Track P1 head screen position for scoreboard dithering
+        if (gc == GameController)
+        {
+            var playerSnake = gc.GetPlayerSnake();
+            if (playerSnake?.Body?.Count > 0)
+            {
+                var h = playerSnake.Body[^1];
+                _p1HeadScreenX = h.X + camX;
+                _p1HeadScreenY = h.Y + camY;
+            }
+        }
 
         if (_drawGrid && _highQualityTextures)
             await DrawGrid(worldSize);
@@ -929,8 +1051,7 @@
             return;
         }
 
-        // ── Step 1: Rasterize all walls into a global grid of occupied cells (cached) ──
-        // Rebuild if the cache was built empty (race during handshake) but walls are now available
+        // Cache brick grid cells
         if (!_wallCaches.TryGetValue(gc, out var occupied) ||
             (occupied.Count == 0 && walls.Count > 0))
         {
@@ -950,9 +1071,42 @@
             _wallCaches[gc] = occupied;
         }
 
-        // ── Step 2: Mortar fill — each cell expanded on exposed sides to form the wall border ──
-        const int border = 2;
-        await ctx.SetFillStyleAsync("#2e3033");
+        // ── Wipe under walls ──
+        await ctx.SetFillStyleAsync("#7c9c45");
+        foreach (var (cx, cy) in occupied)
+            await ctx.FillRectAsync(cx * bs - 3, cy * bs - 3, bs + 6, bs + 6);
+
+        static int FM(int a, int b) => ((a % b) + b) % b;
+
+        // Brick ID: running bond — 2 cells wide, offset by 1 cell on odd rows
+        static (int col, int row) BrickId(int cx, int cy) =>
+            (FM(cy, 2) == 0 ? (int)Math.Floor(cx / 2.0) : (int)Math.Floor((cx - 1) / 2.0), cy);
+
+        static int BrickHash(int a, int b)
+        {
+            int h = a * 374761393 + b * 668265263;
+            h = (h ^ (h >> 13)) * 1274126177;
+            return (h ^ (h >> 16)) & 0x7FFFFFFF;
+        }
+
+        // ── Group cells into bricks ──
+        // Each brick is keyed by (brickCol, row). Collect the occupied cells per brick
+        // and compute the actual pixel rect from the cells that exist.
+        var bricks = new Dictionary<(int, int), (int minCx, int maxCx, int cy)>();
+        foreach (var (cx, cy) in occupied)
+        {
+            var bid = BrickId(cx, cy);
+            if (bricks.TryGetValue(bid, out var prev))
+                bricks[bid] = (Math.Min(prev.minCx, cx), Math.Max(prev.maxCx, cx), cy);
+            else
+                bricks[bid] = (cx, cx, cy);
+        }
+
+        const int mt = 1; // mortar half-thickness (1px each side = 2px total gap)
+
+        // ── 1. Outer border with concave-corner patches ──
+        const double bdr = 3;
+        await ctx.SetFillStyleAsync("#1a1c1e");
         foreach (var (cx, cy) in occupied)
         {
             double px = cx * bs, py = cy * bs;
@@ -960,40 +1114,88 @@
             bool nB = occupied.Contains((cx, cy + 1));
             bool nL = occupied.Contains((cx - 1, cy));
             bool nR = occupied.Contains((cx + 1, cy));
-            double ex = px - (nL ? 0 : border);
-            double ey = py - (nT ? 0 : border);
-            double ew = bs + (nL ? 0 : border) + (nR ? 0 : border);
-            double eh = bs + (nT ? 0 : border) + (nB ? 0 : border);
-            await ctx.FillRectAsync(ex, ey, ew, eh);
+
+            if (!nT) await ctx.FillRectAsync(px - (nL ? 0 : bdr), py - bdr,
+                        bs + (nL ? 0 : bdr) + (nR ? 0 : bdr), bdr);
+            if (!nB) await ctx.FillRectAsync(px - (nL ? 0 : bdr), py + bs,
+                        bs + (nL ? 0 : bdr) + (nR ? 0 : bdr), bdr);
+            if (!nL) await ctx.FillRectAsync(px - bdr, py - (nT ? 0 : bdr),
+                        bdr, bs + (nT ? 0 : bdr) + (nB ? 0 : bdr));
+            if (!nR) await ctx.FillRectAsync(px + bs, py - (nT ? 0 : bdr),
+                        bdr, bs + (nT ? 0 : bdr) + (nB ? 0 : bdr));
+
+            if (nT && nR && !occupied.Contains((cx + 1, cy - 1)))
+                await ctx.FillRectAsync(px + bs, py - bdr, bdr, bdr);
+            if (nT && nL && !occupied.Contains((cx - 1, cy - 1)))
+                await ctx.FillRectAsync(px - bdr, py - bdr, bdr, bdr);
+            if (nB && nR && !occupied.Contains((cx + 1, cy + 1)))
+                await ctx.FillRectAsync(px + bs, py + bs, bdr, bdr);
+            if (nB && nL && !occupied.Contains((cx - 1, cy + 1)))
+                await ctx.FillRectAsync(px - bdr, py + bs, bdr, bdr);
         }
 
-        // ── Step 3: Draw brick faces with running bond ──
-        static int FM(int a, int b) => ((a % b) + b) % b;
-        const int m = 1;
-
+        // ── 2. Mortar background — fill entire wall interior with mortar color ──
+        await ctx.SetFillStyleAsync("#2a2420");
         foreach (var (cx, cy) in occupied)
+            await ctx.FillRectAsync(cx * bs, cy * bs, bs, bs);
+
+        // ── 3. Brick faces — each brick drawn as ONE inset rectangle ──
+        // Mortar gaps are created by the inset; no per-cell mortar lines needed.
+        string[] palette = { "#7a6e63", "#6e6358", "#736860", "#80756a",
+                             "#6b6055", "#78706b", "#847a6f", "#716659" };
+        for (int ci = 0; ci < palette.Length; ci++)
         {
-            double px = cx * bs, py = cy * bs;
+            await ctx.SetFillStyleAsync(palette[ci]);
+            foreach (var (bid, info) in bricks)
+            {
+                if (BrickHash(bid.Item1, bid.Item2) % palette.Length != ci) continue;
+                double bx = info.minCx * bs + mt;
+                double by = info.cy * bs + mt;
+                double bw = (info.maxCx - info.minCx + 1) * bs - mt * 2;
+                double bh = bs - mt * 2;
+                await ctx.FillRectAsync(bx, by, bw, bh);
+            }
+        }
 
-            int topInset = m;
-            int botInset = m;
-
-            bool evenRow = FM(cy, 2) == 0;
-            bool isJoint = evenRow ? FM(cx, 2) == 0 : FM(cx, 2) == 1;
-            int leftInset = isJoint ? m : 0;
-            int rightInset = isJoint ? 0 : m;
-
-            double fx = px + leftInset;
-            double fy = py + topInset;
-            double fw = bs - leftInset - rightInset;
-            double fh = bs - topInset - botInset;
-
-            int brickCol = evenRow
-                ? (int)Math.Floor(cx / 2.0)
-                : (int)Math.Floor((cx - 1) / 2.0);
-            int shade = FM(brickCol + cy, 2);
-            await ctx.SetFillStyleAsync(shade == 0 ? "#787c80" : "#6a6e72");
-            await ctx.FillRectAsync(fx, fy, fw, fh);
+        // ── 4. Per-brick bevel (drawn on the brick rect, not per-cell) ──
+        const int bv = 2;
+        // Top highlight
+        await ctx.SetFillStyleAsync("rgba(255,255,255,0.13)");
+        foreach (var (_, info) in bricks)
+        {
+            double bx = info.minCx * bs + mt;
+            double by = info.cy * bs + mt;
+            double bw = (info.maxCx - info.minCx + 1) * bs - mt * 2;
+            await ctx.FillRectAsync(bx, by, bw, bv);
+        }
+        // Left highlight
+        await ctx.SetFillStyleAsync("rgba(255,255,255,0.08)");
+        foreach (var (_, info) in bricks)
+        {
+            double bx = info.minCx * bs + mt;
+            double by = info.cy * bs + mt;
+            double bh = bs - mt * 2;
+            await ctx.FillRectAsync(bx, by, bv, bh);
+        }
+        // Bottom shadow
+        await ctx.SetFillStyleAsync("rgba(0,0,0,0.18)");
+        foreach (var (_, info) in bricks)
+        {
+            double bx = info.minCx * bs + mt;
+            double by = info.cy * bs + mt;
+            double bw = (info.maxCx - info.minCx + 1) * bs - mt * 2;
+            double bh = bs - mt * 2;
+            await ctx.FillRectAsync(bx, by + bh - bv, bw, bv);
+        }
+        // Right shadow
+        await ctx.SetFillStyleAsync("rgba(0,0,0,0.12)");
+        foreach (var (_, info) in bricks)
+        {
+            double bx = info.minCx * bs + mt;
+            double by = info.cy * bs + mt;
+            double bw = (info.maxCx - info.minCx + 1) * bs - mt * 2;
+            double bh = bs - mt * 2;
+            await ctx.FillRectAsync(bx + bw - bv, by, bv, bh);
         }
     }
 

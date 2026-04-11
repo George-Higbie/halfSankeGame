@@ -17,7 +17,7 @@ namespace SnakeGame;
 
 public class Server
 {
-	private static long interval = 0L;
+	private static double interval = 0.0;
 
 	private static ulong startInterval = 0uL;
 
@@ -183,11 +183,11 @@ public class Server
 			{
 				Thread.SpinWait(100);
 			}
-			interval += watch.ElapsedMilliseconds;
+			interval += watch.Elapsed.TotalMilliseconds;
 			watch.Restart();
 			if (interval >= 1000)
 			{
-				interval = 0L;
+				interval -= 1000.0;
 				FPS = totalFrames - startInterval;
 				Console.WriteLine("FPS: " + FPS);
 				startInterval = totalFrames;
