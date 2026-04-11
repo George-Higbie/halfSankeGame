@@ -72,6 +72,11 @@ namespace GUI.Components.Controllers
 
         public void Disconnect()
         {
+            PlayerId = null;
+            WorldSize = null;
+            _snakes.Clear();
+            _walls.Clear();
+            _powerups.Clear();
             _network.Disconnect();
         }
 
