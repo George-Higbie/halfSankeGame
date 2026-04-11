@@ -611,10 +611,12 @@
     {
         _frameStopwatch.Start();
         int tick = 0;
+        var frameSw = new Stopwatch();
         try
         {
             while (!ct.IsCancellationRequested)
             {
+                frameSw.Restart();
                 try
                 {
                     // P1 move
@@ -639,7 +641,10 @@
                     if (++tick % 6 == 0) await InvokeAsync(StateHasChanged);
                 }
                 catch { /* skip frame */ }
-                await Task.Delay(FrameDelayMs, ct);
+                var drawMs = (int)frameSw.ElapsedMilliseconds;
+                var remaining = FrameDelayMs - drawMs;
+                if (remaining > 0)
+                    await Task.Delay(remaining, ct);
             }
         }
         catch (TaskCanceledException) { }
@@ -746,8 +751,8 @@
         await _context.RectAsync(vx, vy, vw, vh);
         await _context.ClipAsync();
 
-        var camX = Math.Round(vx + vw / 2.0 - centerX);
-        var camY = Math.Round(vy + vh / 2.0 - centerY);
+        var camX = vx + vw / 2.0 - centerX;
+        var camY = vy + vh / 2.0 - centerY;
         await _context.TranslateAsync(camX, camY);
 
         if (_drawGrid && _highQualityTextures)
@@ -775,10 +780,14 @@
         await _context.SetLineWidthAsync(2);
         await _context.BeginPathAsync();
         var hw = worldSize / 2;
-        for (int i = -hw; i <= hw; i += GridSpacing)
+        var gs = GridSpacing;
+        for (int i = -hw; i <= hw; i += gs)
         {
             await _context.MoveToAsync(i, -hw);
             await _context.LineToAsync(i, hw);
+        }
+        for (int i = -hw; i <= hw; i += gs)
+        {
             await _context.MoveToAsync(-hw, i);
             await _context.LineToAsync(hw, i);
         }

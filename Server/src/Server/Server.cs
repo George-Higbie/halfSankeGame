@@ -170,9 +170,14 @@ public class Server
 	{
 		if (watch.IsRunning)
 		{
-			while (watch.ElapsedMilliseconds < msPerFrame)
+			long target = msPerFrame;
+			while (watch.ElapsedMilliseconds < target - 2)
 			{
 				Thread.Sleep(1);
+			}
+			while (watch.ElapsedMilliseconds < target)
+			{
+				Thread.SpinWait(100);
 			}
 			interval += watch.ElapsedMilliseconds;
 			watch.Restart();
