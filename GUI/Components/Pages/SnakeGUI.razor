@@ -441,7 +441,7 @@
     private const double DitherCell = 5.0;
     private const double DitherHalf = DitherCell / 2.0;
     private const double DitherMaxR = DitherHalf * 2.0;   // overflows cell → clips to solid
-    private const double DitherMinR = DitherHalf * 0.12;   // ~0.3px → always visible dots
+    private const double DitherMinR = DitherHalf * 0.40;   // 1px → always visible dots
 
     private double ComputeDitherRadius()
     {
