@@ -70,7 +70,7 @@ namespace GUI.Components.Controllers
         }
 
         /// <summary>Connects to the game server and enters the initialization phase.</summary>
-        public async Task ConnectAsync(string host, int port, string name)
+        public async Task ConnectAsync(string host, int port, string name, int skinIndex = 0)
         {
             _isInitializing = true;
             _pendingPlayerId = null;
@@ -78,7 +78,7 @@ namespace GUI.Components.Controllers
             _pendingWalls = new();
             try
             {
-                await _network.ConnectAsync(host, port, name);
+                await _network.ConnectAsync(host, port, name, skinIndex);
             }
             catch
             {
@@ -207,6 +207,7 @@ namespace GUI.Components.Controllers
             if (update.Name != null) existing.Name = update.Name;
             if (update.Body != null) existing.Body = update.Body;
             if (update.Direction != null) existing.Direction = update.Direction;
+            if (update.Skin.HasValue) existing.Skin = update.Skin;
         }
     }
 }

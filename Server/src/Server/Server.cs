@@ -105,13 +105,18 @@ public class Server
 		}
 		Socket theSocket = state.TheSocket;
 		string text = "not set";
-		text = Regex.Replace(state.GetData().Trim(), "\\n|\\t|\\r", "");
-		Console.WriteLine("Player(" + state.ID + ") \"" + text + "\" joined.");
+		string rawData = state.GetData();
+		string[] lines = rawData.Split('\n');
+		text = lines[0].Trim();
+		int skinIndex = 0;
+		if (lines.Length > 1 && !string.IsNullOrWhiteSpace(lines[1]))
+			int.TryParse(lines[1].Trim(), out skinIndex);
+		Console.WriteLine("Player(" + state.ID + ") \"" + text + "\" joined with skin " + skinIndex + ".");
 		state.OnNetworkAction = DataCameFromClient;
 		Snake snake;
 		lock (world)
 		{
-			snake = world.AddRandomSnake(text, (int)state.ID);
+			snake = world.AddRandomSnake(text, (int)state.ID, skinIndex);
 			if (text.Contains("spectate"))
 			{
 				snake.Discontinue(0u);

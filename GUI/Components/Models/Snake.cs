@@ -37,6 +37,9 @@ namespace GUI.Components.Models
         [JsonPropertyName("join")]
         public bool? Joined { get; set; }
 
+        [JsonPropertyName("skin")]
+        public int? Skin { get; set; }
+
         /// <summary>
         /// Returns a deep copy to prevent cross-thread mutation during rendering.
         /// </summary>
@@ -50,7 +53,8 @@ namespace GUI.Components.Models
             Died = Died,
             Alive = Alive,
             Disconnected = Disconnected,
-            Joined = Joined
+            Joined = Joined,
+            Skin = Skin
         };
     }
 }

@@ -59,8 +59,8 @@ namespace GUI.Components.Controllers
 
         public NetworkController() { }
 
-        /// <summary>Connects to the server, sends the player name, and starts the read loop.</summary>
-        public async Task ConnectAsync(string host, int port, string playerName, CancellationToken ct = default)
+        /// <summary>Connects to the server, sends the player name and skin index, and starts the read loop.</summary>
+        public async Task ConnectAsync(string host, int port, string playerName, int skinIndex = 0, CancellationToken ct = default)
         {
             Disconnect();
 
@@ -78,7 +78,7 @@ namespace GUI.Components.Controllers
             _reader = new StreamReader(stream, Encoding.UTF8);
             _writer = new StreamWriter(stream, Encoding.UTF8) { NewLine = "\n", AutoFlush = true };
 
-            await _writer.WriteLineAsync(playerName);
+            await _writer.WriteAsync($"{playerName}\n{skinIndex}\n");
 
             _ = Task.Run(() => ReadLoopAsync(_cts.Token));
         }
@@ -230,7 +230,7 @@ namespace GUI.Components.Controllers
             {
                 try
                 {
-                    await ConnectAsync(_host!, _port, _playerName!, ct);
+                    await ConnectAsync(_host!, _port, _playerName!, ct: ct);
                     return;
                 }
                 catch

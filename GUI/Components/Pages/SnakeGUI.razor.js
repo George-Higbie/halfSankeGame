@@ -73,18 +73,28 @@ function ensureCanvas() {
 
 if (!window.snakeKeyHandlerAttached) {
     document.addEventListener('keydown', function (event) {
-        if (window.theInstance) {
-            var cmdKeys = ["w", "a", "s", "d", "ArrowUp", "ArrowLeft", "ArrowDown", "ArrowRight"];
-            if (cmdKeys.includes(event.key)) {
-                event.preventDefault();
-            }
-            if (event.key === "Shift") {
-                var side = event.code === "ShiftRight" ? "ShiftRight" : "ShiftLeft";
-                window.theInstance.invokeMethodAsync('HandleKeyPress', side);
-                return;
-            }
-            window.theInstance.invokeMethodAsync('HandleKeyPress', event.key);
+        if (!window.theInstance) return;
+
+        var activeTag = document.activeElement ? document.activeElement.tagName : '';
+        var isInInput = activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'SELECT';
+
+        // Always forward Shift signals (for respawn/connect)
+        if (event.key === "Shift") {
+            var side = event.code === "ShiftRight" ? "ShiftRight" : "ShiftLeft";
+            window.theInstance.invokeMethodAsync('HandleKeyPress', side);
+            return;
         }
+
+        // When typing in an input, don't forward other keys to the game
+        if (isInInput) return;
+
+        // Prevent defaults on game keys and menu keys
+        var preventKeys = ["w", "a", "s", "d", "ArrowUp", "ArrowLeft", "ArrowDown", "ArrowRight", "Tab", "Delete", "Backspace"];
+        if (preventKeys.includes(event.key)) {
+            event.preventDefault();
+        }
+
+        window.theInstance.invokeMethodAsync('HandleKeyPress', event.key);
     });
     window.snakeKeyHandlerAttached = true;
 }

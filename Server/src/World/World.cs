@@ -136,6 +136,9 @@ public class Snake
 	[JsonProperty(PropertyName = "join")]
 	public bool joined { get; private set; }
 
+	[JsonProperty(PropertyName = "skin")]
+	public int skin { get; set; }
+
 	public int NumSegments => body.Count - 1;
 
 	public float speed { get; set; } = 3f;
@@ -195,10 +198,11 @@ public class Snake
 		joined = false;
 	}
 
-	public Snake(string _name, Vector2D t, Vector2D h, int _id)
+	public Snake(string _name, Vector2D t, Vector2D h, int _id, int _skin = 0)
 	{
 		ID = _id;
 		name = _name;
+		skin = _skin;
 		body = new LinkedList<Vector2D>();
 		body.AddLast(t);
 		body.AddLast(h);
@@ -659,9 +663,9 @@ public class World
 		return time;
 	}
 
-	public Snake AddSnake(string name, Vector2D t, Vector2D h, int ID)
+	public Snake AddSnake(string name, Vector2D t, Vector2D h, int ID, int skin = 0)
 	{
-		Snake snake = new Snake(name, t, h, ID);
+		Snake snake = new Snake(name, t, h, ID, skin);
 		snake.Join();
 		Snakes.Add(ID, snake);
 		return snake;
@@ -679,10 +683,10 @@ public class World
 		};
 	}
 
-	public Snake AddRandomSnake(string name, int ID)
+	public Snake AddRandomSnake(string name, int ID, int skin = 0)
 	{
 		var (t, h) = RandomSnakeSpawn();
-		return AddSnake(name, t, h, ID);
+		return AddSnake(name, t, h, ID, skin);
 	}
 
 	public Powerup AddRandomPowerup()
@@ -867,17 +871,18 @@ public class World
 	{
 		if (nextPowerup == 0)
 		{
-			nextPowerup = time + (uint)rand.Next(0, 200);
+			nextPowerup = time + (uint)rand.Next(0, 67);
 		}
 		if (nextPowerup <= time)
 		{
-			if (Powerups.Count < 20)
+			if (Powerups.Count < 60)
 			{
 				AddRandomPowerup();
 			}
-			nextPowerup = time + (uint)rand.Next(0, 200);
+			nextPowerup = time + (uint)rand.Next(0, 67);
 		}
 		_ = Size / 2;
+		List<(Vector2D loc, bool drop)> deathDrops = new List<(Vector2D, bool)>();
 		foreach (Snake value in Snakes.Values)
 		{
 			if (!value.Alive)
@@ -895,8 +900,24 @@ public class World
 			}
 			if (DoesSnakeCollide(value))
 			{
+				int segCount = 0;
+				foreach (var (v1, v2) in value.Segments())
+				{
+					if (segCount % 3 == 0)
+					{
+						var midX = (v1.X_f + v2.X_f) / 2.0;
+						var midY = (v1.Y_f + v2.Y_f) / 2.0;
+						deathDrops.Add((new Vector2D(midX, midY), true));
+					}
+					segCount++;
+				}
 				value.Die(time);
 			}
+		}
+		foreach (var (loc, _) in deathDrops)
+		{
+			Powerup p = new Powerup(loc);
+			Powerups.Add(p.GetID(), p);
 		}
 		time++;
 	}
