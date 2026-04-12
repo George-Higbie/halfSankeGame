@@ -887,7 +887,7 @@ public class World
 			value.Update(time, Size);
 			foreach (Powerup value2 in Powerups.Values)
 			{
-				if (value2.IsAlive() && (value2.GetLocation() - value.Head).Length() <= 10.0)
+				if (value2.IsAlive() && (value2.GetLocation() - value.Head).Length() <= 16.0)
 				{
 					value.Powerup();
 					value2.Die();

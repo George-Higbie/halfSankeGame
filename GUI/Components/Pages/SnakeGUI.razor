@@ -874,11 +874,12 @@
         if (minCy < maxCy) targetCamY = Math.Clamp(targetCamY, minCy, maxCy);
         else targetCamY = 0;
 
-        // Smooth camera lerp
+        // Smooth camera lerp — use exponential decay for frame-rate-independent smoothing
         if (!cam.Initialized) { cam.X = targetCamX; cam.Y = targetCamY; cam.Initialized = true; }
         else
         {
-            double lerpFactor = Math.Min(1.0, elapsed * 18.0);
+            double smoothing = 8.0; // lower = smoother, higher = snappier
+            double lerpFactor = 1.0 - Math.Exp(-smoothing * elapsed);
             cam.X += (targetCamX - cam.X) * lerpFactor;
             cam.Y += (targetCamY - cam.Y) * lerpFactor;
         }
