@@ -39,7 +39,7 @@ namespace GUI.Components.Models
             // ── Classic / clean ──
             new() { Name = "Classic",      BodyColor = "#4caf50", BodyAccent = "#2e7d32",  Pattern = BodyPattern.Solid,   BellyColor = "#a5d6a7", HeadColor = "#388e3c", DeathColor = "#4caf50" },
             new() { Name = "Ocean",        BodyColor = "#1e88e5", BodyAccent = "#0d47a1",  Pattern = BodyPattern.Solid,   BellyColor = "#90caf9", HeadColor = "#1565c0", DeathColor = "#1e88e5" },
-            new() { Name = "Shadow",       BodyColor = "#37474f", BodyAccent = "#263238",  Pattern = BodyPattern.Solid,   BellyColor = "#78909c", HeadColor = "#263238", DeathColor = "#455a64", EyeColor = "#ff1744", PupilColor = "#b71c1c" },
+            new() { Name = "Shadow",       BodyColor = "#37474f", BodyAccent = "#263238",  Pattern = BodyPattern.Solid,   BellyColor = "#78909c", HeadColor = "#263238", DeathColor = "#455a64", EyeColor = "#ff1744" },
 
             // ── Striped (multi-color) ──
             new() { Name = "Coral Snake",  BodyColor = "#e53935", BodyAccent = "#fff9c4",  BodyAccent2 = "#212121", Pattern = BodyPattern.Stripe,  BellyColor = "#ef9a9a", HeadColor = "#212121", DeathColor = "#e53935", OutlineColor = "#1a1a1a" },
@@ -56,7 +56,7 @@ namespace GUI.Components.Models
             new() { Name = "Arctic",       BodyColor = "#e0f7fa", BodyAccent = "#00acc1",  Pattern = BodyPattern.Checker, BellyColor = "#b2ebf2", HeadColor = "#00838f", DeathColor = "#00acc1" },
 
             // ── Wave ──
-            new() { Name = "Void",         BodyColor = "#212121", BodyAccent = "#7c4dff",  BodyAccent2 = "#ea80fc", Pattern = BodyPattern.Wave,    BellyColor = "#424242", HeadColor = "#311b92", DeathColor = "#6200ea", EyeColor = "#e040fb", PupilColor = "#aa00ff" },
+            new() { Name = "Void",         BodyColor = "#212121", BodyAccent = "#7c4dff",  BodyAccent2 = "#ea80fc", Pattern = BodyPattern.Wave,    BellyColor = "#424242", HeadColor = "#311b92", DeathColor = "#6200ea", PupilColor = "#7c4dff" },
             new() { Name = "Ember",        BodyColor = "#ff6d00", BodyAccent = "#ffab00",  BodyAccent2 = "#d50000", Pattern = BodyPattern.Wave,    BellyColor = "#ffe0b2", HeadColor = "#e65100", DeathColor = "#ff6d00" },
 
             // ── RGB stripe ──

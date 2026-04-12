@@ -180,4 +180,4 @@
 /Users/alexwaldmann/PS9/GUI/obj/Debug/net10.0/GUI.pdb
 /Users/alexwaldmann/PS9/GUI/obj/Debug/net10.0/GUI.genruntimeconfig.cache
 /Users/alexwaldmann/PS9/GUI/obj/Debug/net10.0/ref/GUI.dll
-/Users/alexwaldmann/PS9/GUI/obj/Debug/net10.0/compressed/8lwa20onfk-{0}-uveodwhi3t-uveodwhi3t.gz
+/Users/alexwaldmann/PS9/GUI/obj/Debug/net10.0/compressed/8lwa20onfk-{0}-b4ser8yekl-b4ser8yekl.gz

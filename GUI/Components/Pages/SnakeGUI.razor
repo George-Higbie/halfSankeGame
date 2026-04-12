@@ -15,14 +15,26 @@
 
 <PageTitle>Snake</PageTitle>
 
-@* ── Sidebar Toggle ── *@
-<button class="sidebar-toggle" @onclick="(() => _sidebarOpen = !_sidebarOpen)">
-    @(_sidebarOpen ? "✕" : "☰")
-</button>
+@* ── Sidebar Toggle(s) ── *@
+@if (_splitScreen)
+{
+    <button class="sidebar-toggle sidebar-toggle-left" @onclick="(() => _p1SidebarOpen = !_p1SidebarOpen)">
+        @(_p1SidebarOpen ? "✕" : "☰")
+    </button>
+    <button class="sidebar-toggle sidebar-toggle-right" @onclick="(() => _p2SidebarOpen = !_p2SidebarOpen)">
+        @(_p2SidebarOpen ? "✕" : "☰")
+    </button>
+}
+else
+{
+    <button class="sidebar-toggle sidebar-toggle-right" @onclick="(() => _sidebarOpen = !_sidebarOpen)">
+        @(_sidebarOpen ? "✕" : "☰")
+    </button>
+}
 
-@* ── Sidebar ── *@
-<div class="snake-sidebar @(_sidebarOpen ? "open" : "")">
-    <h2 style="margin:0 0 12px; font-size:1.3rem; letter-spacing:1px;">SNAKE</h2>
+@* ── P1 Sidebar (left in split, right in single) ── *@
+<div class="snake-sidebar @(_splitScreen ? "snake-sidebar-left" : "") @((_splitScreen ? _p1SidebarOpen : _sidebarOpen) ? "open" : "")">
+    <h2 style="margin:0 0 12px; font-size:1.1rem; letter-spacing:1px;">@(_splitScreen ? "PLAYER 1" : "SNAKE")</h2>
 
     <div class="field-group">
         <label>Host</label>
@@ -32,12 +44,12 @@
         <label>Port</label>
         <input type="number" @bind="Port" />
     </div>
-    <div class="field-group">
+    <div class="field-group @(_p1MenuIndex == 0 ? "menu-focused" : "")">
         <label>@(_splitScreen ? "P1 Name" : "Name")</label>
-        <input @bind="PlayerName" />
+        <input id="p1NameInput" @bind="PlayerName" disabled="@(_p1Playing)" />
     </div>
 
-    <div style="margin-top:6px;">
+    <div class="skin-section @(_p1MenuIndex == 1 ? "menu-focused" : "")" style="margin-top:6px; padding:4px;">
         <label style="display:block;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.5px;opacity:0.6;margin-bottom:4px;">@(_splitScreen ? "P1 Skin" : "Skin")</label>
         <div class="skin-grid">
             @for (int i = 0; i < SnakeSkin.AllSkins.Length; i++)
@@ -79,75 +91,79 @@
     </div>
 
     <div style="display:flex; gap:6px; margin-top:8px;">
-        <button class="btn-snake" @onclick="(() => Connect())">@(_splitScreen ? "Connect P1" : "Connect")</button>
-        <button class="btn-snake btn-secondary" @onclick="(() => Reconnect())">Reconnect</button>
+        <button class="btn-snake @(_p1MenuIndex == 2 ? "menu-focused" : "")" @onclick="(() => Connect())">@(_splitScreen ? "Connect P1" : "Connect")</button>
+        <button class="btn-snake btn-secondary @(_p1MenuIndex == 3 ? "menu-focused" : "")" @onclick="(() => Reconnect())">Reconnect</button>
     </div>
 
-    <div class="status-line">@_status</div>
+    <div class="status-line">@_status @if (_status == "Disconnected" || _status == "Game Over") { <span style="opacity:0.5; font-size:0.85em;">— @(_splitScreen ? "Left Shift" : "Shift") to start</span> }</div>
 
     <div style="margin-top:12px; border-top:1px solid rgba(255,255,255,0.1); padding-top:10px;">
-        <label class="toggle"><input type="checkbox" @bind="_highQualityTextures" /> High Quality</label>
-        <label class="toggle"><input type="checkbox" @bind="_drawGrid" /> Grid Overlay</label>
-        <label class="toggle"><input type="checkbox" @bind="_showScoreboard" /> Scoreboard</label>
-        <label class="toggle"><input type="checkbox" @bind="_splitScreen" /> Split Screen (2P)</label>
+        <label class="toggle @(_p1MenuIndex == 4 ? "menu-focused" : "")"><input type="checkbox" @bind="_highQualityTextures" /> High Quality</label>
+        <label class="toggle @(_p1MenuIndex == 5 ? "menu-focused" : "")"><input type="checkbox" @bind="_drawGrid" /> Grid Overlay</label>
+        <label class="toggle @(_p1MenuIndex == 6 ? "menu-focused" : "")"><input type="checkbox" @bind="_showScoreboard" /> Scoreboard</label>
+        <label class="toggle @(_p1MenuIndex == 7 ? "menu-focused" : "")"><input type="checkbox" @bind="_splitScreen" /> Split Screen (2P)</label>
     </div>
-
-    @if (_splitScreen)
-    {
-    <div style="margin-top:12px; border-top:1px solid rgba(255,255,255,0.1); padding-top:10px;">
-        <strong style="font-size:0.85rem; text-transform:uppercase; letter-spacing:1px; opacity:0.7;">Player 2 (Arrows)</strong>
-        <div class="field-group" style="margin-top:6px;">
-            <label>P2 Name</label>
-            <input @bind="Player2Name" />
-        </div>
-        <div style="margin-top:6px;">
-            <label style="display:block;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.5px;opacity:0.6;margin-bottom:4px;">P2 Skin</label>
-            <div class="skin-grid">
-                @for (int i = 0; i < SnakeSkin.AllSkins.Length; i++)
-                {
-                    var idx = i;
-                    var skin = SnakeSkin.AllSkins[idx];
-                    <button class="skin-tile @(idx == _p2SkinIndex ? "skin-active" : "")"
-                            @onclick="(() => _p2SkinIndex = idx)" title="@skin.Name">
-                        <svg width="18" height="18" viewBox="0 0 18 18">
-                            <defs><clipPath id="p2c@(idx)"><circle cx="9" cy="9" r="8"/></clipPath></defs>
-                            <circle cx="9" cy="9" r="8" fill="@skin.BodyColor"/>
-                            @if (skin.Pattern == BodyPattern.Stripe && skin.BodyAccent != null)
-                            {
-                                <line x1="1" y1="6" x2="17" y2="6" stroke="@skin.BodyAccent" stroke-width="2" clip-path="url(#p2c@(idx))"/>
-                                <line x1="1" y1="12" x2="17" y2="12" stroke="@(skin.BodyAccent2 ?? skin.BodyAccent)" stroke-width="2" clip-path="url(#p2c@(idx))"/>
-                            }
-                            else if (skin.Pattern == BodyPattern.Diamond && skin.BodyAccent != null)
-                            {
-                                <polygon points="9,3 13,9 9,15 5,9" fill="@skin.BodyAccent" opacity="0.6" clip-path="url(#p2c@(idx))"/>
-                            }
-                            else if (skin.Pattern == BodyPattern.Checker && skin.BodyAccent != null)
-                            {
-                                <rect x="1" y="1" width="8" height="8" fill="@skin.BodyAccent" opacity="0.5" clip-path="url(#p2c@(idx))"/>
-                                <rect x="9" y="9" width="8" height="8" fill="@(skin.BodyAccent2 ?? skin.BodyAccent)" opacity="0.5" clip-path="url(#p2c@(idx))"/>
-                            }
-                            else if (skin.Pattern == BodyPattern.Wave && skin.BodyAccent != null)
-                            {
-                                <path d="M1,9 Q5,5 9,9 Q13,13 17,9" stroke="@skin.BodyAccent" stroke-width="2" fill="none" opacity="0.7" clip-path="url(#p2c@(idx))"/>
-                            }
-                            <circle cx="7" cy="7" r="3" fill="white" opacity="0.15"/>
-                        </svg>
-                    </button>
-                }
-            </div>
-            <div class="skin-preview-bar">
-                <BECanvas Width="160" Height="40" @ref="_p2PreviewRef"></BECanvas>
-                <span style="font-size:0.72rem;opacity:0.6;">@SnakeSkin.AllSkins[_p2SkinIndex].Name</span>
-            </div>
-        </div>
-        <div style="display:flex; gap:6px; margin-top:8px;">
-            <button class="btn-snake" @onclick="ConnectP2">Connect P2</button>
-        </div>
-        <div class="status-line">@_p2Status</div>
-    </div>
-    }
-
 </div>
+
+@* ── P2 Sidebar (right side, split screen only) ── *@
+@if (_splitScreen)
+{
+<div class="snake-sidebar @(_p2SidebarOpen ? "open" : "")">
+    <h2 style="margin:0 0 12px; font-size:1.1rem; letter-spacing:1px;">PLAYER 2</h2>
+
+    <div class="field-group @(_p2MenuIndex == 0 ? "menu-focused" : "")">
+        <label>P2 Name</label>
+        <input id="p2NameInput" @bind="Player2Name" disabled="@(_p2Playing)" />
+    </div>
+
+    <div class="skin-section @(_p2MenuIndex == 1 ? "menu-focused" : "")" style="margin-top:6px; padding:4px;">
+        <label style="display:block;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.5px;opacity:0.6;margin-bottom:4px;">P2 Skin</label>
+        <div class="skin-grid">
+            @for (int i = 0; i < SnakeSkin.AllSkins.Length; i++)
+            {
+                var idx = i;
+                var skin = SnakeSkin.AllSkins[idx];
+                <button class="skin-tile @(idx == _p2SkinIndex ? "skin-active" : "")"
+                        @onclick="(() => _p2SkinIndex = idx)" title="@skin.Name">
+                    <svg width="18" height="18" viewBox="0 0 18 18">
+                        <defs><clipPath id="p2c@(idx)"><circle cx="9" cy="9" r="8"/></clipPath></defs>
+                        <circle cx="9" cy="9" r="8" fill="@skin.BodyColor"/>
+                        @if (skin.Pattern == BodyPattern.Stripe && skin.BodyAccent != null)
+                        {
+                            <line x1="1" y1="6" x2="17" y2="6" stroke="@skin.BodyAccent" stroke-width="2" clip-path="url(#p2c@(idx))"/>
+                            <line x1="1" y1="12" x2="17" y2="12" stroke="@(skin.BodyAccent2 ?? skin.BodyAccent)" stroke-width="2" clip-path="url(#p2c@(idx))"/>
+                        }
+                        else if (skin.Pattern == BodyPattern.Diamond && skin.BodyAccent != null)
+                        {
+                            <polygon points="9,3 13,9 9,15 5,9" fill="@skin.BodyAccent" opacity="0.6" clip-path="url(#p2c@(idx))"/>
+                        }
+                        else if (skin.Pattern == BodyPattern.Checker && skin.BodyAccent != null)
+                        {
+                            <rect x="1" y="1" width="8" height="8" fill="@skin.BodyAccent" opacity="0.5" clip-path="url(#p2c@(idx))"/>
+                            <rect x="9" y="9" width="8" height="8" fill="@(skin.BodyAccent2 ?? skin.BodyAccent)" opacity="0.5" clip-path="url(#p2c@(idx))"/>
+                        }
+                        else if (skin.Pattern == BodyPattern.Wave && skin.BodyAccent != null)
+                        {
+                            <path d="M1,9 Q5,5 9,9 Q13,13 17,9" stroke="@skin.BodyAccent" stroke-width="2" fill="none" opacity="0.7" clip-path="url(#p2c@(idx))"/>
+                        }
+                        <circle cx="7" cy="7" r="3" fill="white" opacity="0.15"/>
+                    </svg>
+                </button>
+            }
+        </div>
+        <div class="skin-preview-bar">
+            <BECanvas Width="160" Height="40" @ref="_p2PreviewRef"></BECanvas>
+            <span style="font-size:0.72rem;opacity:0.6;">@SnakeSkin.AllSkins[_p2SkinIndex].Name</span>
+        </div>
+    </div>
+
+    <div style="display:flex; gap:6px; margin-top:8px;">
+        <button class="btn-snake @(_p2MenuIndex == 2 ? "menu-focused" : "")" @onclick="ConnectP2">Connect P2</button>
+    </div>
+
+    <div class="status-line">@_p2Status @if (_p2Status == "Disconnected" || _p2Status == "Game Over") { <span style="opacity:0.5; font-size:0.85em;">— Right Shift to start</span> }</div>
+</div>
+}
 
 @* ── Canvas ── *@
 <div id="snakeCanvas" style="position:fixed; inset:0; z-index:1; background:#7c9c45; overflow:hidden;">
@@ -172,112 +188,44 @@
 }
 
 @* ── Death Overlay ── *@
-@if (_showDeathScreen)
+@if (_showDeathScreen && !(_splitScreen ? _p1SidebarOpen : _sidebarOpen))
 {
     <div class="death-overlay" style="@(_splitScreen ? "right:50%; left:0;" : "")">
-        @if (_p1ShowMenu)
-        {
-            <div class="death-menu">
-                <h2 style="margin:0 0 16px; font-size:1.5rem; letter-spacing:2px;">MENU</h2>
-                <div class="menu-item @(_p1MenuFocus == 0 ? "menu-focused" : "")">
-                    <label style="font-size:0.75rem; text-transform:uppercase; letter-spacing:0.5px; opacity:0.6;">Skin</label>
-                    <div class="menu-skin-selector">
-                        <span class="menu-arrow @(_p1MenuFocus == 0 ? "" : "dim")">◀</span>
-                        <div class="skin-preview-bar" style="margin:0; flex:1; justify-content:center;">
-                            @{ var ms1 = SnakeSkin.AllSkins[_p1SkinIndex]; }
-                            <svg width="80" height="22" viewBox="0 0 100 22">
-                                <path d="M 5 11 Q 15 5, 30 11 Q 45 17, 60 11 Q 75 5, 85 11"
-                                      stroke="@ms1.BodyColor" stroke-width="7" fill="none" stroke-linecap="round"/>
-                                <circle cx="88" cy="11" r="4" fill="@ms1.HeadColor"/>
-                                <circle cx="89.5" cy="9.5" r="1.2" fill="@ms1.EyeColor"/>
-                                <circle cx="89.5" cy="12.5" r="1.2" fill="@ms1.EyeColor"/>
-                            </svg>
-                            <span style="font-size:0.75rem; opacity:0.8;">@ms1.Name</span>
-                        </div>
-                        <span class="menu-arrow @(_p1MenuFocus == 0 ? "" : "dim")">▶</span>
-                    </div>
-                </div>
-                <div class="menu-item menu-btn @(_p1MenuFocus == 1 ? "menu-focused" : "")" @onclick="(() => { _p1ShowMenu = false; RespawnP1(); })">
-                    Respawn
-                </div>
-                <div class="menu-item menu-btn @(_p1MenuFocus == 2 ? "menu-focused" : "")" @onclick="(() => { _p1ShowMenu = false; _ = Connect(); })">
-                    Reconnect
-                </div>
-                <span class="menu-hint">@(_splitScreen ? "W/S: Navigate • A/D: Skin • Shift: Select • Tab: Close" : "W/S or ↑↓: Navigate • A/D or ←→: Skin • Shift/Enter: Select • Tab/Del: Close")</span>
-            </div>
-        }
-        else
-        {
-            <h1>GAME OVER</h1>
-            <div class="death-scores">
-                <h3>High Scores</h3>
-                <ul>
-                    @foreach (var s in GameController.GetSnakes().OrderByDescending(x => x.Score ?? 0).Take(5))
-                    {
-                        <li>
-                            <span>@(s.Name ?? "Anonymous")</span>
-                            <span>@(s.Score ?? 0)</span>
-                        </li>
-                    }
-                </ul>
-            </div>
-            <button class="btn-respawn" @onclick="RespawnP1">Respawn</button>
-            <span class="respawn-hint">@(_splitScreen ? "Shift to respawn • Tab for menu" : "Shift to respawn • Tab or Del for menu")</span>
-        }
+        <h1>GAME OVER</h1>
+        <div class="death-scores">
+            <h3>High Scores</h3>
+            <ul>
+                @foreach (var s in GameController.GetSnakes().OrderByDescending(x => x.Score ?? 0).Take(5))
+                {
+                    <li>
+                        <span>@(s.Name ?? "Anonymous")</span>
+                        <span>@(s.Score ?? 0)</span>
+                    </li>
+                }
+            </ul>
+        </div>
+        <button class="btn-respawn" @onclick="RespawnP1">Respawn</button>
+        <span class="respawn-hint">@(_splitScreen ? "Shift to respawn • Tab for menu" : "Shift to respawn • Tab/Del for menu")</span>
     </div>
 }
-@if (_p2ShowDeath && _splitScreen)
+@if (_p2ShowDeath && _splitScreen && !_p2SidebarOpen)
 {
     <div class="death-overlay" style="left:50%; right:0;">
-        @if (_p2ShowMenu)
-        {
-            <div class="death-menu">
-                <h2 style="margin:0 0 16px; font-size:1.5rem; letter-spacing:2px;">MENU</h2>
-                <div class="menu-item @(_p2MenuFocus == 0 ? "menu-focused" : "")">
-                    <label style="font-size:0.75rem; text-transform:uppercase; letter-spacing:0.5px; opacity:0.6;">Skin</label>
-                    <div class="menu-skin-selector">
-                        <span class="menu-arrow @(_p2MenuFocus == 0 ? "" : "dim")">◀</span>
-                        <div class="skin-preview-bar" style="margin:0; flex:1; justify-content:center;">
-                            @{ var ms2 = SnakeSkin.AllSkins[_p2SkinIndex]; }
-                            <svg width="80" height="22" viewBox="0 0 100 22">
-                                <path d="M 5 11 Q 15 5, 30 11 Q 45 17, 60 11 Q 75 5, 85 11"
-                                      stroke="@ms2.BodyColor" stroke-width="7" fill="none" stroke-linecap="round"/>
-                                <circle cx="88" cy="11" r="4" fill="@ms2.HeadColor"/>
-                                <circle cx="89.5" cy="9.5" r="1.2" fill="@ms2.EyeColor"/>
-                                <circle cx="89.5" cy="12.5" r="1.2" fill="@ms2.EyeColor"/>
-                            </svg>
-                            <span style="font-size:0.75rem; opacity:0.8;">@ms2.Name</span>
-                        </div>
-                        <span class="menu-arrow @(_p2MenuFocus == 0 ? "" : "dim")">▶</span>
-                    </div>
-                </div>
-                <div class="menu-item menu-btn @(_p2MenuFocus == 1 ? "menu-focused" : "")" @onclick="(() => { _p2ShowMenu = false; RespawnP2(); })">
-                    Respawn
-                </div>
-                <div class="menu-item menu-btn @(_p2MenuFocus == 2 ? "menu-focused" : "")" @onclick="(() => { _p2ShowMenu = false; _ = ConnectP2(); })">
-                    Reconnect
-                </div>
-                <span class="menu-hint">↑↓: Navigate • ←→: Skin • Enter: Select • Del: Close</span>
-            </div>
-        }
-        else
-        {
-            <h1>GAME OVER</h1>
-            <div class="death-scores">
-                <h3>High Scores</h3>
-                <ul>
-                    @foreach (var s in (_p2Game?.GetSnakes() ?? Array.Empty<Snake>()).OrderByDescending(x => x.Score ?? 0).Take(5))
-                    {
-                        <li>
-                            <span>@(s.Name ?? "Anonymous")</span>
-                            <span>@(s.Score ?? 0)</span>
-                        </li>
-                    }
-                </ul>
-            </div>
-            <button class="btn-respawn" @onclick="RespawnP2">Respawn</button>
-            <span class="respawn-hint">Right Shift to respawn • Del for menu</span>
-        }
+        <h1>GAME OVER</h1>
+        <div class="death-scores">
+            <h3>High Scores</h3>
+            <ul>
+                @foreach (var s in (_p2Game?.GetSnakes() ?? Array.Empty<Snake>()).OrderByDescending(x => x.Score ?? 0).Take(5))
+                {
+                    <li>
+                        <span>@(s.Name ?? "Anonymous")</span>
+                        <span>@(s.Score ?? 0)</span>
+                    </li>
+                }
+            </ul>
+        </div>
+        <button class="btn-respawn" @onclick="RespawnP2">Respawn</button>
+        <span class="respawn-hint">Right Shift to respawn • Del for menu</span>
     </div>
 }
 
@@ -291,16 +239,37 @@
         background: rgba(18, 18, 24, 0.92);
         backdrop-filter: blur(12px);
         color: #e0e0e0;
-        padding: 20px 16px;
+        padding: 52px 16px 20px;
         font-family: 'Segoe UI', system-ui, sans-serif;
         font-size: 0.9rem;
         overflow-y: auto;
         border-left: 1px solid rgba(255,255,255,0.06);
         transform: translateX(100%);
         transition: transform 0.2s ease;
+        box-sizing: border-box;
+    }
+    .menu-focused {
+        background: rgba(76, 175, 80, 0.15);
+        border-radius: 4px;
+        box-shadow: inset 0 0 0 1.5px rgba(76, 175, 80, 0.5);
+    }
+    .skin-section { max-width: 100%; overflow: hidden; }
+    .skin-preview-bar { max-width: 100%; overflow: hidden; }
+    .skin-preview-bar canvas { max-width: 100%; height: auto; }
+    .snake-sidebar.snake-sidebar-left {
+        left: 0; right: auto;
+        border-left: none;
+        border-right: 1px solid rgba(255,255,255,0.06);
+        transform: translateX(-100%);
     }
     .snake-sidebar.open {
         transform: translateX(0);
+    }
+    .sidebar-toggle-left {
+        left: 12px; right: auto;
+    }
+    .sidebar-toggle-right {
+        right: 12px; left: auto;
     }
     .sidebar-toggle {
         position: fixed;
@@ -521,70 +490,12 @@
         border-radius: 6px;
         padding: 4px 8px;
         display: flex;
+        flex-direction: column;
         align-items: center;
-        gap: 8px;
+        gap: 4px;
     }
     @@keyframes fadeIn { to { opacity: 1; } }
 
-    /* Death menu */
-    .death-menu {
-        background: rgba(18, 18, 24, 0.92);
-        backdrop-filter: blur(12px);
-        border-radius: 12px;
-        padding: 24px 28px;
-        min-width: 260px;
-        max-width: 340px;
-        display: flex;
-        flex-direction: column;
-        align-items: stretch;
-        gap: 10px;
-        color: #e0e0e0;
-        font-family: 'Segoe UI', system-ui, sans-serif;
-        animation: fadeIn 0.3s ease forwards;
-        opacity: 0;
-    }
-    .menu-item {
-        padding: 8px 12px;
-        border-radius: 6px;
-        border: 2px solid transparent;
-        transition: border-color 0.15s, background 0.15s;
-    }
-    .menu-item.menu-focused {
-        border-color: #4caf50;
-        background: rgba(76,175,80,0.12);
-    }
-    .menu-item.menu-btn {
-        text-align: center;
-        font-weight: 700;
-        font-size: 1.05rem;
-        cursor: pointer;
-        padding: 10px 12px;
-        background: rgba(255,255,255,0.07);
-        border-radius: 6px;
-        transition: background 0.15s, border-color 0.15s;
-    }
-    .menu-item.menu-btn:hover {
-        background: rgba(255,255,255,0.14);
-    }
-    .menu-skin-selector {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        margin-top: 4px;
-    }
-    .menu-arrow {
-        font-size: 1rem;
-        opacity: 0.7;
-        user-select: none;
-    }
-    .menu-arrow.dim { opacity: 0.2; }
-    .menu-hint {
-        font-size: 0.72rem;
-        opacity: 0.4;
-        text-align: center;
-        margin-top: 8px;
-        letter-spacing: 0.3px;
-    }
 </style>
 
 @code
@@ -646,12 +557,6 @@
     // Head screen position for scoreboard dithering
     private double _p1HeadScreenX, _p1HeadScreenY;
 
-    // Death menu state
-    private bool _p1ShowMenu;
-    private bool _p2ShowMenu;
-    private int _p1MenuFocus; // 0=skin, 1=respawn, 2=reconnect
-    private int _p2MenuFocus;
-
     // ==================== UI State ====================
     private string Host { get; set; } = "localhost";
     private int Port { get; set; } = 11000;
@@ -663,6 +568,14 @@
     private bool _drawGrid = true;
     private bool _highQualityTextures = true;
     private bool _sidebarOpen = true;
+    private bool _p1SidebarOpen = true;
+    private bool _p2SidebarOpen = true;
+    private int _p1MenuIndex = 1;
+    private int _p2MenuIndex = 1;
+    private const int P1MenuMax = 7;
+    private const int P2MenuMax = 2;
+    private bool _p1Playing => GameController.PlayerId.HasValue && !_showDeathScreen;
+    private bool _p2Playing => _p2Game?.PlayerId.HasValue == true && !_p2ShowDeath;
     private bool _showScoreboard = true;
     private int _p1SkinIndex;
     private int _p2SkinIndex = 1;
@@ -762,62 +675,53 @@
     [JSInvokable]
     public void HandleKeyPress(string key)
     {
-        // Tab: P1 death menu toggle
+        bool p1SidebarVis = _splitScreen ? _p1SidebarOpen : _sidebarOpen;
+        bool p2SidebarVis = _splitScreen && _p2SidebarOpen;
+        bool p1CanOpen = _showDeathScreen || !GameController.PlayerId.HasValue;
+        bool p2CanOpen = _p2ShowDeath || _p2Game == null || _p2Game.PlayerId.HasValue != true;
+
+        // ── Tab: P1 menu action / open ──
         if (key == "Tab")
         {
-            if (_showDeathScreen)
-            {
-                _p1ShowMenu = !_p1ShowMenu;
-                if (_p1ShowMenu) _p1MenuFocus = 0;
-                _ = InvokeAsync(StateHasChanged);
-            }
+            if (p1SidebarVis)
+                ActivateP1MenuItem();
+            else if (!_splitScreen && !p1SidebarVis && p1CanOpen)
+                OpenP1Sidebar();
+            else if (_splitScreen && !_p1SidebarOpen && p1CanOpen)
+                OpenP1Sidebar();
+            _ = InvokeAsync(StateHasChanged);
             return;
         }
 
-        // Delete/Backspace: P2 death menu toggle (or P1 if single player)
+        // ── Delete/Backspace: P2 action (split) or P1 fallback (single) ──
         if (key == "Delete" || key == "Backspace")
         {
             if (_splitScreen)
             {
-                if (_p2ShowDeath)
-                {
-                    _p2ShowMenu = !_p2ShowMenu;
-                    if (_p2ShowMenu) _p2MenuFocus = 0;
-                    _ = InvokeAsync(StateHasChanged);
-                }
+                if (p2SidebarVis) ActivateP2MenuItem();
+                else if (p2CanOpen) OpenP2Sidebar();
             }
             else
             {
-                if (_showDeathScreen)
-                {
-                    _p1ShowMenu = !_p1ShowMenu;
-                    if (_p1ShowMenu) _p1MenuFocus = 0;
-                    _ = InvokeAsync(StateHasChanged);
-                }
+                if (p1SidebarVis) ActivateP1MenuItem();
+                else if (p1CanOpen) OpenP1Sidebar();
             }
+            _ = InvokeAsync(StateHasChanged);
             return;
         }
 
-        // Enter: P2 confirm in menu, or P1 confirm in single player menu
+        // ── Enter: activate focused item in whichever sidebar is open ──
         if (key == "Enter")
         {
-            if (_splitScreen && _p2ShowMenu)
-            {
-                ActivateP2MenuItem();
-                return;
-            }
-            if (!_splitScreen && _p1ShowMenu)
-            {
-                ActivateP1MenuItem();
-                return;
-            }
+            if (p1SidebarVis) ActivateP1MenuItem();
+            if (p2SidebarVis) ActivateP2MenuItem();
+            _ = InvokeAsync(StateHasChanged);
             return;
         }
 
-        // Shift: confirm in menu, respawn if dead, or connect if not yet connected
+        // ── Shift: respawn / connect ──
         if (key == "ShiftLeft")
         {
-            if (_p1ShowMenu) { ActivateP1MenuItem(); return; }
             if (_showDeathScreen) { RespawnP1(); return; }
             if (!GameController.PlayerId.HasValue && _status != "Connecting...")
             { _ = InvokeAsync(() => Connect()); return; }
@@ -827,92 +731,156 @@
         {
             if (_splitScreen)
             {
-                if (_p2ShowMenu) { ActivateP2MenuItem(); return; }
                 if (_p2ShowDeath) { RespawnP2(); return; }
                 if (_p2Game != null && !_p2Game.PlayerId.HasValue && _p2Status != "Connecting...")
                 { _ = InvokeAsync(() => ConnectP2()); return; }
                 return;
             }
-            if (_p1ShowMenu) { ActivateP1MenuItem(); return; }
+            // Single-player: Right Shift also controls P1
             if (_showDeathScreen) { RespawnP1(); return; }
             if (!GameController.PlayerId.HasValue && _status != "Connecting...")
             { _ = InvokeAsync(() => Connect()); return; }
             return;
         }
 
-        // WASD → P1 menu nav or movement
-        var p1Cmd = key.ToLowerInvariant() switch
+        // ── Escape: close open sidebar ──
+        if (key == "Escape")
+        {
+            if (p1SidebarVis) { if (_splitScreen) _p1SidebarOpen = false; else _sidebarOpen = false; }
+            if (p2SidebarVis) _p2SidebarOpen = false;
+            _ = InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        // ── WASD: P1 menu nav (when sidebar open) or movement ──
+        var wasdDir = key.ToLowerInvariant() switch
         {
             "w" => "up", "a" => "left", "s" => "down", "d" => "right",
             _ => (string?)null
         };
-        if (p1Cmd != null)
+        if (wasdDir != null)
         {
-            if (_p1ShowMenu) { HandleMenuNav(ref _p1MenuFocus, ref _p1SkinIndex, p1Cmd); return; }
-            if (_showDeathScreen || !_p1Ready) return;
-            EnqueueMove(_p1MoveQueue, _p1MoveLock, p1Cmd);
+            if (p1SidebarVis)
+            {
+                NavigateMenu(ref _p1MenuIndex, P1MenuMax, wasdDir, isP1: true);
+                _ = InvokeAsync(StateHasChanged);
+            }
+            else
+            {
+                if (_showDeathScreen || !_p1Ready) return;
+                EnqueueMove(_p1MoveQueue, _p1MoveLock, wasdDir);
+            }
             return;
         }
 
-        // Arrow keys → P2 (split) or P1 (single), menu nav or movement
-        var arrowCmd = key switch
+        // ── Arrow keys: P2 menu nav (split) or P1 fallback (single) ──
+        var arrowDir = key switch
         {
             "ArrowUp" => "up", "ArrowLeft" => "left",
             "ArrowDown" => "down", "ArrowRight" => "right",
             _ => (string?)null
         };
-        if (arrowCmd == null) return;
+        if (arrowDir == null) return;
 
-        if (_splitScreen && _p2Game != null)
+        if (_splitScreen)
         {
-            if (_p2ShowMenu) { HandleMenuNav(ref _p2MenuFocus, ref _p2SkinIndex, arrowCmd); return; }
-            if (_p2ShowDeath || !_p2Ready) return;
-            EnqueueMove(_p2MoveQueue, _p2MoveLock, arrowCmd);
+            if (p2SidebarVis)
+            {
+                NavigateMenu(ref _p2MenuIndex, P2MenuMax, arrowDir, isP1: false);
+                _ = InvokeAsync(StateHasChanged);
+            }
+            else
+            {
+                if (_p2ShowDeath || !_p2Ready || _p2Game == null) return;
+                EnqueueMove(_p2MoveQueue, _p2MoveLock, arrowDir);
+            }
         }
         else
         {
-            if (_p1ShowMenu) { HandleMenuNav(ref _p1MenuFocus, ref _p1SkinIndex, arrowCmd); return; }
-            if (_showDeathScreen || !_p1Ready) return;
-            EnqueueMove(_p1MoveQueue, _p1MoveLock, arrowCmd);
+            if (p1SidebarVis)
+            {
+                NavigateMenu(ref _p1MenuIndex, P1MenuMax, arrowDir, isP1: true);
+                _ = InvokeAsync(StateHasChanged);
+            }
+            else
+            {
+                if (_showDeathScreen || !_p1Ready) return;
+                EnqueueMove(_p1MoveQueue, _p1MoveLock, arrowDir);
+            }
         }
     }
 
-    private void HandleMenuNav(ref int focus, ref int skinIndex, string dir)
+    private void NavigateMenu(ref int idx, int max, string dir, bool isP1)
     {
         switch (dir)
         {
-            case "up": focus = Math.Max(0, focus - 1); break;
-            case "down": focus = Math.Min(2, focus + 1); break;
+            case "up":
+                idx = idx <= 0 ? max : idx - 1;
+                break;
+            case "down":
+                idx = idx >= max ? 0 : idx + 1;
+                break;
             case "left":
-                if (focus == 0) skinIndex = (skinIndex - 1 + SnakeSkin.AllSkins.Length) % SnakeSkin.AllSkins.Length;
+                if (idx == 1)
+                {
+                    if (isP1) _p1SkinIndex = (_p1SkinIndex - 1 + SnakeSkin.AllSkins.Length) % SnakeSkin.AllSkins.Length;
+                    else _p2SkinIndex = (_p2SkinIndex - 1 + SnakeSkin.AllSkins.Length) % SnakeSkin.AllSkins.Length;
+                }
                 break;
             case "right":
-                if (focus == 0) skinIndex = (skinIndex + 1) % SnakeSkin.AllSkins.Length;
+                if (idx == 1)
+                {
+                    if (isP1) _p1SkinIndex = (_p1SkinIndex + 1) % SnakeSkin.AllSkins.Length;
+                    else _p2SkinIndex = (_p2SkinIndex + 1) % SnakeSkin.AllSkins.Length;
+                }
                 break;
         }
-        _ = InvokeAsync(StateHasChanged);
     }
 
     private void ActivateP1MenuItem()
     {
-        switch (_p1MenuFocus)
+        switch (_p1MenuIndex)
         {
-            case 0: break; // skin — already handled by left/right
-            case 1: _p1ShowMenu = false; RespawnP1(); break;
-            case 2: _p1ShowMenu = false; _ = InvokeAsync(() => Connect()); break;
+            case 0: _ = JsRuntime.InvokeVoidAsync("focusSidebarInput", "p1NameInput"); break;
+            case 1: break;
+            case 2:
+                if (_splitScreen) _p1SidebarOpen = false; else _sidebarOpen = false;
+                _ = InvokeAsync(() => Connect());
+                break;
+            case 3:
+                if (_splitScreen) _p1SidebarOpen = false; else _sidebarOpen = false;
+                _ = InvokeAsync(() => Reconnect());
+                break;
+            case 4: _highQualityTextures = !_highQualityTextures; break;
+            case 5: _drawGrid = !_drawGrid; break;
+            case 6: _showScoreboard = !_showScoreboard; break;
+            case 7: _splitScreen = !_splitScreen; break;
         }
-        _ = InvokeAsync(StateHasChanged);
     }
 
     private void ActivateP2MenuItem()
     {
-        switch (_p2MenuFocus)
+        switch (_p2MenuIndex)
         {
-            case 0: break;
-            case 1: _p2ShowMenu = false; RespawnP2(); break;
-            case 2: _p2ShowMenu = false; _ = InvokeAsync(() => ConnectP2()); break;
+            case 0: _ = JsRuntime.InvokeVoidAsync("focusSidebarInput", "p2NameInput"); break;
+            case 1: break;
+            case 2:
+                _p2SidebarOpen = false;
+                _ = InvokeAsync(() => ConnectP2());
+                break;
         }
-        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private void OpenP1Sidebar()
+    {
+        if (_splitScreen) _p1SidebarOpen = true; else _sidebarOpen = true;
+        _p1MenuIndex = 1;
+    }
+
+    private void OpenP2Sidebar()
+    {
+        _p2SidebarOpen = true;
+        _p2MenuIndex = 1;
     }
 
     private static string? GetSnakeHeading(GameController gc)
@@ -981,12 +949,15 @@
     private async Task Connect(bool closeSidebar = true)
     {
         _showDeathScreen = false;
-        _p1ShowMenu = false;
         lock (_p1MoveLock) _p1MoveQueue.Clear();
         _p1LastSentDir = null;
         _p1Ready = false;
         _p1Cam.Reset();
-        if (closeSidebar) _sidebarOpen = false;
+        if (closeSidebar)
+        {
+            if (_splitScreen) _p1SidebarOpen = false;
+            else _sidebarOpen = false;
+        }
         _wallCaches.Remove(GameController);
         GameController.Disconnect();
         try
@@ -1010,13 +981,12 @@
     {
         if (_p2Game == null) return;
         _p2ShowDeath = false;
-        _p2ShowMenu = false;
         lock (_p2MoveLock) _p2MoveQueue.Clear();
         _p2LastSentDir = null;
         _p2Ready = false;
         _p2Cam.Reset();
         _wallCaches.Remove(_p2Game);
-        _sidebarOpen = false;
+        _p2SidebarOpen = false;
         _p2Game.Disconnect();
         try
         {
@@ -1036,7 +1006,7 @@
     private void RespawnP1()
     {
         _showDeathScreen = false;
-        _p1ShowMenu = false;
+        if (_splitScreen) _p1SidebarOpen = false; else _sidebarOpen = false;
         lock (_p1MoveLock) _p1MoveQueue.Clear();
         _p1LastSentDir = null;
         _ = GameController.SendMoveAsync("respawn");
@@ -1046,7 +1016,7 @@
     private void RespawnP2()
     {
         _p2ShowDeath = false;
-        _p2ShowMenu = false;
+        _p2SidebarOpen = false;
         lock (_p2MoveLock) _p2MoveQueue.Clear();
         _p2LastSentDir = null;
         if (_p2Game != null) _ = _p2Game.SendMoveAsync("respawn");
@@ -1206,9 +1176,9 @@
             _p1PreviewCtx ??= _p1PreviewRef != null ? await _p1PreviewRef.CreateCanvas2DAsync() : null;
             if (_p1PreviewCtx != null) { await DrawSkinPreview(_p1PreviewCtx, SnakeSkin.AllSkins[_p1SkinIndex]); _lastP1PreviewSkin = _p1SkinIndex; }
         }
-        if (_splitScreen && _p2SkinIndex != _lastP2PreviewSkin)
+        if (_splitScreen && (_p2SkinIndex != _lastP2PreviewSkin || _p2PreviewCtx == null))
         {
-            _p2PreviewCtx ??= _p2PreviewRef != null ? await _p2PreviewRef.CreateCanvas2DAsync() : null;
+            _p2PreviewCtx = _p2PreviewRef != null ? await _p2PreviewRef.CreateCanvas2DAsync() : null;
             if (_p2PreviewCtx != null) { await DrawSkinPreview(_p2PreviewCtx, SnakeSkin.AllSkins[_p2SkinIndex]); _lastP2PreviewSkin = _p2SkinIndex; }
         }
 

@@ -76,20 +76,32 @@ if (!window.snakeKeyHandlerAttached) {
         if (!window.theInstance) return;
 
         var activeTag = document.activeElement ? document.activeElement.tagName : '';
-        var isInInput = activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'SELECT';
+        var activeType = document.activeElement ? (document.activeElement.type || '').toLowerCase() : '';
+        var isInTextInput = (activeTag === 'INPUT' && activeType !== 'checkbox' && activeType !== 'radio' && activeType !== 'button')
+            || activeTag === 'TEXTAREA' || activeTag === 'SELECT';
 
-        // Always forward Shift signals (for respawn/connect)
+        // Always forward Shift signals (for respawn/connect) — blur any focused input first
         if (event.key === "Shift") {
+            if (isInTextInput && document.activeElement) document.activeElement.blur();
             var side = event.code === "ShiftRight" ? "ShiftRight" : "ShiftLeft";
             window.theInstance.invokeMethodAsync('HandleKeyPress', side);
             return;
         }
 
-        // When typing in an input, don't forward other keys to the game
-        if (isInInput) return;
+        // When typing in a text input, don't forward other keys to the game
+        if (isInTextInput) {
+            if (event.key === 'Tab' || event.key === 'Escape' || event.key === 'Enter') {
+                event.preventDefault();
+                document.activeElement.blur();
+                if (event.key === 'Enter') {
+                    window.theInstance.invokeMethodAsync('HandleKeyPress', 'Enter');
+                }
+            }
+            return;
+        }
 
         // Prevent defaults on game keys and menu keys
-        var preventKeys = ["w", "a", "s", "d", "ArrowUp", "ArrowLeft", "ArrowDown", "ArrowRight", "Tab", "Delete", "Backspace"];
+        var preventKeys = ["w", "a", "s", "d", "ArrowUp", "ArrowLeft", "ArrowDown", "ArrowRight", "Tab", "Delete", "Backspace", "Escape", "Enter"];
         if (preventKeys.includes(event.key)) {
             event.preventDefault();
         }
@@ -98,3 +110,8 @@ if (!window.snakeKeyHandlerAttached) {
     });
     window.snakeKeyHandlerAttached = true;
 }
+
+window.focusSidebarInput = (id) => {
+    const el = document.getElementById(id);
+    if (el) { el.disabled = false; el.focus(); el.select(); }
+};
