@@ -1,3 +1,9 @@
+// <copyright file="GameController.cs" company="Snake PS9">
+// Copyright (c) 2026 Alex Waldmann & George Higbie. All rights reserved.
+// </copyright>
+// Authors: Alex Waldmann, George Higbie
+// Date: 2026-04-12
+
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -36,8 +42,12 @@ namespace GUI.Components.Controllers
         /// <summary>
         /// Initializes the game controller and subscribes to network events.
         /// </summary>
+        /// <param name="network">The network controller to subscribe to. Must not be null.</param>
+        /// <exception cref="ArgumentNullException">Thrown when <paramref name="network"/> is null.</exception>
         public GameController(NetworkController network)
         {
+            ArgumentNullException.ThrowIfNull(network);
+
             _network = network;
             _network.OnPlayerIdReceived += HandlePlayerIdReceived;
             _network.OnWorldSizeReceived += HandleWorldSizeReceived;

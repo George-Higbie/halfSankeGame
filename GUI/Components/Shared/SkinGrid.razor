@@ -1,0 +1,47 @@
+@* Reusable skin-picker grid for the sidebar. One instance per player. *@
+@using GUI.Components.Models
+
+<div class="skin-grid">
+    @for (int i = 0; i < SnakeSkin.AllSkins.Length; i++)
+    {
+        var idx = i;
+        var skin = SnakeSkin.AllSkins[idx];
+        <button class="skin-tile @(idx == SelectedIndex ? "skin-active" : "")"
+                @onclick="(() => OnSkinSelected.InvokeAsync(idx))" title="@skin.Name">
+            <svg width="18" height="18" viewBox="0 0 18 18">
+                <defs><clipPath id="@(IdPrefix)c@(idx)"><circle cx="9" cy="9" r="8"/></clipPath></defs>
+                <circle cx="9" cy="9" r="8" fill="@skin.BodyColor"/>
+                @if (skin.Pattern == BodyPattern.Stripe && skin.BodyAccent != null)
+                {
+                    <line x1="1" y1="6" x2="17" y2="6" stroke="@skin.BodyAccent" stroke-width="2" clip-path="url(#@(IdPrefix)c@(idx))"/>
+                    <line x1="1" y1="12" x2="17" y2="12" stroke="@(skin.BodyAccent2 ?? skin.BodyAccent)" stroke-width="2" clip-path="url(#@(IdPrefix)c@(idx))"/>
+                }
+                else if (skin.Pattern == BodyPattern.Diamond && skin.BodyAccent != null)
+                {
+                    <polygon points="9,3 13,9 9,15 5,9" fill="@skin.BodyAccent" opacity="0.6" clip-path="url(#@(IdPrefix)c@(idx))"/>
+                }
+                else if (skin.Pattern == BodyPattern.Checker && skin.BodyAccent != null)
+                {
+                    <rect x="1" y="1" width="8" height="8" fill="@skin.BodyAccent" opacity="0.5" clip-path="url(#@(IdPrefix)c@(idx))"/>
+                    <rect x="9" y="9" width="8" height="8" fill="@(skin.BodyAccent2 ?? skin.BodyAccent)" opacity="0.5" clip-path="url(#@(IdPrefix)c@(idx))"/>
+                }
+                else if (skin.Pattern == BodyPattern.Wave && skin.BodyAccent != null)
+                {
+                    <path d="M1,9 Q5,5 9,9 Q13,13 17,9" stroke="@skin.BodyAccent" stroke-width="2" fill="none" opacity="0.7" clip-path="url(#@(IdPrefix)c@(idx))"/>
+                }
+                <circle cx="7" cy="7" r="3" fill="white" opacity="0.15"/>
+            </svg>
+        </button>
+    }
+</div>
+
+@code {
+    /// <summary>Index of the currently selected skin.</summary>
+    [Parameter] public int SelectedIndex { get; set; }
+
+    /// <summary>Callback invoked when the user clicks a skin tile.</summary>
+    [Parameter] public EventCallback<int> OnSkinSelected { get; set; }
+
+    /// <summary>Prefix for SVG clip-path IDs to avoid collisions between P1/P2.</summary>
+    [Parameter] public string IdPrefix { get; set; } = "s";
+}

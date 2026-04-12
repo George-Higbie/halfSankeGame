@@ -1,0 +1,67 @@
+// <copyright file="WallTests.cs" company="Snake PS9">
+// Copyright (c) 2026 Alex Waldmann & George Higbie. All rights reserved.
+// </copyright>
+// Author: Alex Waldmann
+// Date: 2026-04-12
+
+using GUI.Components.Models;
+
+namespace GUI.Tests.Models;
+
+/// <summary>
+/// Tests for <see cref="Wall"/>.
+/// </summary>
+[TestClass]
+public class WallTests
+{
+    [TestMethod]
+    public void DefaultWall_HasZeroIdAndNullEndpoints()
+    {
+        var w = new Wall();
+
+        Assert.AreEqual(0, w.Id);
+        Assert.IsNull(w.Point1);
+        Assert.IsNull(w.Point2);
+    }
+
+    [TestMethod]
+    public void SetProperties_ReflectsValues()
+    {
+        var w = new Wall
+        {
+            Id = 3,
+            Point1 = new Point2D(-50, 0),
+            Point2 = new Point2D(50, 0)
+        };
+
+        Assert.AreEqual(3, w.Id);
+        Assert.AreEqual(-50, w.Point1!.X);
+        Assert.AreEqual(0, w.Point1.Y);
+        Assert.AreEqual(50, w.Point2!.X);
+        Assert.AreEqual(0, w.Point2.Y);
+    }
+
+    [TestMethod]
+    public void VerticalWall_PointsShareXCoordinate()
+    {
+        var w = new Wall
+        {
+            Point1 = new Point2D(100, -200),
+            Point2 = new Point2D(100, 200)
+        };
+
+        Assert.AreEqual(w.Point1!.X, w.Point2!.X);
+    }
+
+    [TestMethod]
+    public void HorizontalWall_PointsShareYCoordinate()
+    {
+        var w = new Wall
+        {
+            Point1 = new Point2D(-300, 50),
+            Point2 = new Point2D(300, 50)
+        };
+
+        Assert.AreEqual(w.Point1!.Y, w.Point2!.Y);
+    }
+}

@@ -1,3 +1,9 @@
+// <copyright file="SnakeSkin.cs" company="Snake PS9">
+// Copyright (c) 2026 Alex Waldmann & George Higbie. All rights reserved.
+// </copyright>
+// Authors: Alex Waldmann, George Higbie
+// Date: 2026-04-12
+
 namespace GUI.Components.Models
 {
     /// <summary>
@@ -6,6 +12,7 @@ namespace GUI.Components.Models
     /// </summary>
     public class SnakeSkin
     {
+        /// <summary>Human-readable skin name shown in the picker.</summary>
         public string Name { get; init; } = "Classic";
 
         /// <summary>Primary body color.</summary>
@@ -26,9 +33,16 @@ namespace GUI.Components.Models
         /// <summary>Outline/border color around the body. Null = dark semi-transparent default.</summary>
         public string? OutlineColor { get; init; }
 
+        /// <summary>Color of the head circle.</summary>
         public string HeadColor { get; init; } = "#4caf50";
+
+        /// <summary>Sclera (white of eye) color.</summary>
         public string EyeColor { get; init; } = "white";
+
+        /// <summary>Pupil color.</summary>
         public string PupilColor { get; init; } = "#111";
+
+        /// <summary>Color used for death-explosion particles.</summary>
         public string DeathColor { get; init; } = "#4caf50";
 
         /// <summary>
@@ -65,12 +79,24 @@ namespace GUI.Components.Models
         };
     }
 
+    /// <summary>
+    /// Pattern types that can be applied to a snake's body.
+    /// </summary>
     public enum BodyPattern
     {
+        /// <summary>Single solid color.</summary>
         Solid,
+
+        /// <summary>Alternating color bands along the body.</summary>
         Stripe,
+
+        /// <summary>Checkerboard dots along the body.</summary>
         Checker,
+
+        /// <summary>Diamond-shaped scale marks.</summary>
         Diamond,
+
+        /// <summary>Sinusoidal wave dots along the body.</summary>
         Wave
     }
 }

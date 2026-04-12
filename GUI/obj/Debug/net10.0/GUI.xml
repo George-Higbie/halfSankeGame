@@ -1,0 +1,364 @@
+<?xml version="1.0"?>
+<doc>
+    <assembly>
+        <name>GUI</name>
+    </assembly>
+    <members>
+        <member name="T:GUI.Components.Controllers.GameController">
+            <summary>
+            Manages the game state by processing events from the network controller
+            and providing thread-safe snapshots to the rendering layer.
+            </summary>
+        </member>
+        <member name="P:GUI.Components.Controllers.GameController.PlayerId">
+            <summary>The server-assigned player ID for this client.</summary>
+        </member>
+        <member name="P:GUI.Components.Controllers.GameController.WorldSize">
+            <summary>The world size received from the server.</summary>
+        </member>
+        <member name="E:GUI.Components.Controllers.GameController.OnStateUpdated">
+            <summary>Raised when game state changes; consumers should call StateHasChanged.</summary>
+        </member>
+        <member name="M:GUI.Components.Controllers.GameController.#ctor(GUI.Components.Controllers.NetworkController)">
+            <summary>
+            Initializes the game controller and subscribes to network events.
+            </summary>
+            <param name="network">The network controller to subscribe to. Must not be null.</param>
+            <exception cref="T:System.ArgumentNullException">Thrown when <paramref name="network"/> is null.</exception>
+        </member>
+        <member name="M:GUI.Components.Controllers.GameController.GetSnakes">
+            <summary>Returns a thread-safe deep-copied snapshot of all snakes.</summary>
+        </member>
+        <member name="M:GUI.Components.Controllers.GameController.GetWalls">
+            <summary>Returns a thread-safe snapshot of all walls.</summary>
+        </member>
+        <member name="M:GUI.Components.Controllers.GameController.GetPowerups">
+            <summary>Returns a thread-safe snapshot of all powerups.</summary>
+        </member>
+        <member name="E:GUI.Components.Controllers.GameController.OnPlayerDied">
+            <summary>Fires when the current player dies. Raised once per death event.</summary>
+        </member>
+        <member name="M:GUI.Components.Controllers.GameController.GetPlayerSnake">
+            <summary>Returns a deep copy of the current player's snake, or null.</summary>
+        </member>
+        <member name="M:GUI.Components.Controllers.GameController.ConnectAsync(System.String,System.Int32,System.String,System.Int32)">
+            <summary>Connects to the game server and enters the initialization phase.</summary>
+        </member>
+        <member name="M:GUI.Components.Controllers.GameController.Disconnect">
+            <summary>Disconnects from the server and clears all local game state.</summary>
+        </member>
+        <member name="M:GUI.Components.Controllers.GameController.SendMoveAsync(System.String)">
+            <summary>Sends a movement command to the server if the handshake is complete.</summary>
+        </member>
+        <member name="M:GUI.Components.Controllers.GameController.CommitPendingStateIfInitializing">
+            <summary>
+            Commits pending initialization data and resets collections for the new session.
+            Called once when the first snake or powerup arrives after connecting.
+            </summary>
+        </member>
+        <member name="M:GUI.Components.Controllers.GameController.MergeSnakeFields(GUI.Components.Models.Snake,GUI.Components.Models.Snake)">
+            <summary>
+            Merges non-null fields from an incoming update into the existing snake record.
+            </summary>
+        </member>
+        <member name="T:GUI.Components.Controllers.NetworkController">
+            <summary>
+            Handles the TCP connection to the Snake server, parsing the line-delimited
+            protocol (player ID, world size, then JSON objects) and raising typed events.
+            </summary>
+        </member>
+        <member name="P:GUI.Components.Controllers.NetworkController.PlayerId">
+            <summary>The player ID received during the handshake.</summary>
+        </member>
+        <member name="P:GUI.Components.Controllers.NetworkController.WorldSize">
+            <summary>The world size received during the handshake.</summary>
+        </member>
+        <member name="E:GUI.Components.Controllers.NetworkController.OnPlayerIdReceived">
+            <summary>Raised when the server sends the player ID.</summary>
+        </member>
+        <member name="E:GUI.Components.Controllers.NetworkController.OnWorldSizeReceived">
+            <summary>Raised when the server sends the world size.</summary>
+        </member>
+        <member name="E:GUI.Components.Controllers.NetworkController.OnWallReceived">
+            <summary>Raised for each wall object received.</summary>
+        </member>
+        <member name="E:GUI.Components.Controllers.NetworkController.OnSnakeReceived">
+            <summary>Raised for each snake object received.</summary>
+        </member>
+        <member name="E:GUI.Components.Controllers.NetworkController.OnPowerupReceived">
+            <summary>Raised for each powerup object received.</summary>
+        </member>
+        <member name="E:GUI.Components.Controllers.NetworkController.OnConnected">
+            <summary>Raised when the handshake (player ID + world size) completes.</summary>
+        </member>
+        <member name="E:GUI.Components.Controllers.NetworkController.OnDisconnected">
+            <summary>Raised when the connection is lost or closed.</summary>
+        </member>
+        <member name="P:GUI.Components.Controllers.NetworkController.IsConnected">
+            <summary>Whether the underlying TCP client is currently connected.</summary>
+        </member>
+        <member name="M:GUI.Components.Controllers.NetworkController.#ctor">
+            <summary>Initializes a new instance of the <see cref="T:GUI.Components.Controllers.NetworkController"/> class.</summary>
+        </member>
+        <member name="M:GUI.Components.Controllers.NetworkController.ConnectAsync(System.String,System.Int32,System.String,System.Int32,System.Threading.CancellationToken)">
+            <summary>Connects to the server, sends the player name and skin index, and starts the read loop.</summary>
+        </member>
+        <member name="M:GUI.Components.Controllers.NetworkController.SendMoveAsync(System.String)">
+            <summary>Sends a JSON movement command to the server.</summary>
+        </member>
+        <member name="M:GUI.Components.Controllers.NetworkController.Disconnect">
+            <summary>Disconnects and clears connection state.</summary>
+        </member>
+        <member name="M:GUI.Components.Controllers.NetworkController.Dispose">
+            <summary>Releases all resources held by this controller.</summary>
+        </member>
+        <member name="M:GUI.Components.Controllers.NetworkController.CancelTokenSource">
+            <summary>Cancels the token source if it has not already been cancelled.</summary>
+        </member>
+        <member name="M:GUI.Components.Controllers.NetworkController.DisposeConnectionResources">
+            <summary>Disposes the reader, writer, and TCP client, tolerating already-disposed resources.</summary>
+        </member>
+        <member name="M:GUI.Components.Controllers.NetworkController.ReconnectAsync(System.Threading.CancellationToken)">
+            <summary>
+            Attempt to reconnect using the last-known host/port/name with exponential backoff.
+            </summary>
+        </member>
+        <member name="T:GUI.Components.Models.Point2D">
+            <summary>
+            Represents a 2D coordinate or direction vector in the game world.
+            Used for positions, directions, and body segments.
+            </summary>
+        </member>
+        <member name="P:GUI.Components.Models.Point2D.X">
+            <summary>Horizontal coordinate (positive = right).</summary>
+        </member>
+        <member name="P:GUI.Components.Models.Point2D.Y">
+            <summary>Vertical coordinate (positive = down).</summary>
+        </member>
+        <member name="M:GUI.Components.Models.Point2D.#ctor">
+            <summary>Initializes a new <see cref="T:GUI.Components.Models.Point2D"/> at the origin (0, 0).</summary>
+        </member>
+        <member name="M:GUI.Components.Models.Point2D.#ctor(System.Int32,System.Int32)">
+            <summary>Initializes a new <see cref="T:GUI.Components.Models.Point2D"/> at the given coordinates.</summary>
+            <param name="x">The horizontal coordinate.</param>
+            <param name="y">The vertical coordinate.</param>
+        </member>
+        <member name="T:GUI.Components.Models.Powerup">
+            <summary>
+            Represents a collectible powerup at a location in the game world.
+            When consumed by a snake the server marks it as died.
+            </summary>
+        </member>
+        <member name="P:GUI.Components.Models.Powerup.Id">
+            <summary>Server-assigned unique powerup identifier.</summary>
+        </member>
+        <member name="P:GUI.Components.Models.Powerup.Location">
+            <summary>World-space location of the powerup, or null if unknown.</summary>
+        </member>
+        <member name="P:GUI.Components.Models.Powerup.Died">
+            <summary>Whether this powerup has been consumed or removed.</summary>
+        </member>
+        <member name="T:GUI.Components.Models.Snake">
+            <summary>
+            Represents a snake in the game world, including its body segments,
+            direction, score, and lifecycle state.
+            </summary>
+        </member>
+        <member name="P:GUI.Components.Models.Snake.Id">
+            <summary>Server-assigned unique snake identifier.</summary>
+        </member>
+        <member name="P:GUI.Components.Models.Snake.Name">
+            <summary>Player-chosen display name.</summary>
+        </member>
+        <member name="P:GUI.Components.Models.Snake.Body">
+            <summary>Ordered list of body segment vertices (tail first, head last).</summary>
+        </member>
+        <member name="P:GUI.Components.Models.Snake.Direction">
+            <summary>Current movement direction vector.</summary>
+        </member>
+        <member name="P:GUI.Components.Models.Snake.Score">
+            <summary>Number of powerups collected.</summary>
+        </member>
+        <member name="P:GUI.Components.Models.Snake.Died">
+            <summary>Whether the snake died this frame.</summary>
+        </member>
+        <member name="P:GUI.Components.Models.Snake.Alive">
+            <summary>Whether the snake is currently alive.</summary>
+        </member>
+        <member name="P:GUI.Components.Models.Snake.Disconnected">
+            <summary>Whether the player has disconnected.</summary>
+        </member>
+        <member name="P:GUI.Components.Models.Snake.Joined">
+            <summary>Whether the player just joined this frame.</summary>
+        </member>
+        <member name="P:GUI.Components.Models.Snake.Skin">
+            <summary>Index into <see cref="F:GUI.Components.Models.SnakeSkin.AllSkins"/> for the snake's visual appearance.</summary>
+        </member>
+        <member name="M:GUI.Components.Models.Snake.Clone">
+            <summary>
+            Returns a deep copy to prevent cross-thread mutation during rendering.
+            </summary>
+        </member>
+        <member name="T:GUI.Components.Models.SnakeSkin">
+            <summary>
+            Defines the visual appearance of a snake including body pattern.
+            To add a new skin, append an entry to <see cref="F:GUI.Components.Models.SnakeSkin.AllSkins"/>.
+            </summary>
+        </member>
+        <member name="P:GUI.Components.Models.SnakeSkin.Name">
+            <summary>Human-readable skin name shown in the picker.</summary>
+        </member>
+        <member name="P:GUI.Components.Models.SnakeSkin.BodyColor">
+            <summary>Primary body color.</summary>
+        </member>
+        <member name="P:GUI.Components.Models.SnakeSkin.BodyAccent">
+            <summary>Secondary color for stripe/checker/diamond patterns. Null = solid body.</summary>
+        </member>
+        <member name="P:GUI.Components.Models.SnakeSkin.BodyAccent2">
+            <summary>Third color used alternating with accent in multi-color patterns.</summary>
+        </member>
+        <member name="P:GUI.Components.Models.SnakeSkin.Pattern">
+            <summary>Body pattern type rendered on the canvas.</summary>
+        </member>
+        <member name="P:GUI.Components.Models.SnakeSkin.BellyColor">
+            <summary>Belly (underside) highlight color drawn as a thinner line on top of the body.</summary>
+        </member>
+        <member name="P:GUI.Components.Models.SnakeSkin.OutlineColor">
+            <summary>Outline/border color around the body. Null = dark semi-transparent default.</summary>
+        </member>
+        <member name="P:GUI.Components.Models.SnakeSkin.HeadColor">
+            <summary>Color of the head circle.</summary>
+        </member>
+        <member name="P:GUI.Components.Models.SnakeSkin.EyeColor">
+            <summary>Sclera (white of eye) color.</summary>
+        </member>
+        <member name="P:GUI.Components.Models.SnakeSkin.PupilColor">
+            <summary>Pupil color.</summary>
+        </member>
+        <member name="P:GUI.Components.Models.SnakeSkin.DeathColor">
+            <summary>Color used for death-explosion particles.</summary>
+        </member>
+        <member name="F:GUI.Components.Models.SnakeSkin.AllSkins">
+            <summary>
+            All available skins. Add new skins here — they automatically appear in the picker.
+            </summary>
+        </member>
+        <member name="T:GUI.Components.Models.BodyPattern">
+            <summary>
+            Pattern types that can be applied to a snake's body.
+            </summary>
+        </member>
+        <member name="F:GUI.Components.Models.BodyPattern.Solid">
+            <summary>Single solid color.</summary>
+        </member>
+        <member name="F:GUI.Components.Models.BodyPattern.Stripe">
+            <summary>Alternating color bands along the body.</summary>
+        </member>
+        <member name="F:GUI.Components.Models.BodyPattern.Checker">
+            <summary>Checkerboard dots along the body.</summary>
+        </member>
+        <member name="F:GUI.Components.Models.BodyPattern.Diamond">
+            <summary>Diamond-shaped scale marks.</summary>
+        </member>
+        <member name="F:GUI.Components.Models.BodyPattern.Wave">
+            <summary>Sinusoidal wave dots along the body.</summary>
+        </member>
+        <member name="T:GUI.Components.Models.Wall">
+            <summary>
+            Represents a wall segment defined by two endpoints in the game world.
+            Walls are axis-aligned: either <see cref="P:GUI.Components.Models.Wall.Point1"/> and <see cref="P:GUI.Components.Models.Wall.Point2"/>
+            share an X coordinate (vertical) or a Y coordinate (horizontal).
+            </summary>
+        </member>
+        <member name="P:GUI.Components.Models.Wall.Id">
+            <summary>Server-assigned unique wall identifier.</summary>
+        </member>
+        <member name="P:GUI.Components.Models.Wall.Point1">
+            <summary>First endpoint of the wall segment.</summary>
+        </member>
+        <member name="P:GUI.Components.Models.Wall.Point2">
+            <summary>Second endpoint of the wall segment.</summary>
+        </member>
+        <member name="T:GUI.Components.Rendering.SnakeRenderer">
+            <summary>
+            Handles all HTML5 canvas drawing for the Snake game.
+            Extracted from SnakeGUI.razor to keep rendering logic separate from UI concerns.
+            </summary>
+        </member>
+        <member name="F:GUI.Components.Rendering.SnakeRenderer.SnakeWidth">
+            <summary>Width of the snake body stroke in pixels.</summary>
+        </member>
+        <member name="T:GUI.Components.Rendering.SnakeRenderer.DeathAnim">
+            <summary>Tracks a per-snake death explosion animation.</summary>
+        </member>
+        <member name="P:GUI.Components.Rendering.SnakeRenderer.DeathAnim.ElapsedSeconds">
+            <summary>Seconds elapsed since the explosion started.</summary>
+        </member>
+        <member name="P:GUI.Components.Rendering.SnakeRenderer.DeathAnim.Path">
+            <summary>The body path captured at death.</summary>
+        </member>
+        <member name="P:GUI.Components.Rendering.SnakeRenderer.DeathAnim.Skin">
+            <summary>Visual appearance to render during the explosion.</summary>
+        </member>
+        <member name="P:GUI.Components.Rendering.SnakeRenderer.DeathAnim.IsFinished">
+            <summary>Whether the animation has fully played out.</summary>
+        </member>
+        <member name="T:GUI.Components.Rendering.SnakeRenderer.CameraState">
+            <summary>Smooth camera state for a viewport.</summary>
+        </member>
+        <member name="F:GUI.Components.Rendering.SnakeRenderer.CameraState.X">
+            <summary>Current camera X position.</summary>
+        </member>
+        <member name="F:GUI.Components.Rendering.SnakeRenderer.CameraState.Y">
+            <summary>Current camera Y position.</summary>
+        </member>
+        <member name="F:GUI.Components.Rendering.SnakeRenderer.CameraState.Initialized">
+            <summary>Whether the camera has been initialized to a target.</summary>
+        </member>
+        <member name="M:GUI.Components.Rendering.SnakeRenderer.CameraState.Reset">
+            <summary>Resets camera to the uninitialized state.</summary>
+        </member>
+        <member name="M:GUI.Components.Rendering.SnakeRenderer.ClearWallCache(GUI.Components.Controllers.GameController)">
+            <summary>Clears the cached wall cell grid for the given controller.</summary>
+        </member>
+        <member name="F:GUI.Components.Rendering.SnakeRenderer.PreviewPath">
+            <summary>Static wavy path for the skin preview canvases.</summary>
+        </member>
+        <member name="M:GUI.Components.Rendering.SnakeRenderer.DrawSkinPreview(Blazor.Extensions.Canvas.Canvas2D.Canvas2DContext,GUI.Components.Models.SnakeSkin)">
+            <summary>Draws a skin preview on a small canvas.</summary>
+        </member>
+        <member name="M:GUI.Components.Rendering.SnakeRenderer.DrawViewport(Blazor.Extensions.Canvas.Canvas2D.Canvas2DContext,GUI.Components.Controllers.GameController,System.Collections.Generic.Dictionary{System.Int32,GUI.Components.Rendering.SnakeRenderer.DeathAnim},System.Boolean,System.Int32,System.Int32,System.Nullable{System.Int32},System.Int32,System.Int32,System.Int32,System.Int32,System.Double,GUI.Components.Rendering.SnakeRenderer.CameraState,GUI.Components.Models.SnakeSkin,System.Boolean,System.Boolean)">
+            <summary>
+            Draws one viewport (full-screen or half in split mode).
+            Sets up camera transform, draws background, grid, entities, and restores state.
+            </summary>
+            <returns>The screen-space head position of the player snake (for scoreboard dithering).</returns>
+        </member>
+        <member name="M:GUI.Components.Rendering.SnakeRenderer.DrawDeathAnimations(Blazor.Extensions.Canvas.Canvas2D.Canvas2DContext,System.Double,System.Collections.Generic.Dictionary{System.Int32,GUI.Components.Rendering.SnakeRenderer.DeathAnim})">
+            <summary>Draws active death explosion animations and advances their timers.</summary>
+        </member>
+        <member name="M:GUI.Components.Rendering.SnakeRenderer.DrawRoundRect(Blazor.Extensions.Canvas.Canvas2D.Canvas2DContext,System.Double,System.Double,System.Double,System.Double,System.Double)">
+            <summary>Draws a rounded rectangle path (caller must Fill or Stroke after).</summary>
+        </member>
+        <member name="M:GUI.Components.Rendering.SnakeRenderer.ResolveSkin(System.Nullable{System.Int32})">
+            <summary>Resolves a skin from the server-provided index, falling back to the default.</summary>
+        </member>
+        <member name="M:GUI.Components.Rendering.SnakeRenderer.DrawSnakeBody(Blazor.Extensions.Canvas.Canvas2D.Canvas2DContext,System.Collections.Generic.IReadOnlyList{GUI.Components.Models.Point2D},GUI.Components.Models.SnakeSkin)">
+            <summary>Draws a complete snake (outline, fill, pattern, belly, specular, head + eyes).</summary>
+        </member>
+        <member name="P:GUI.Components.Shared.SkinGrid.SelectedIndex">
+            <summary>Index of the currently selected skin.</summary>
+        </member>
+        <member name="P:GUI.Components.Shared.SkinGrid.OnSkinSelected">
+            <summary>Callback invoked when the user clicks a skin tile.</summary>
+        </member>
+        <member name="P:GUI.Components.Shared.SkinGrid.IdPrefix">
+            <summary>Prefix for SVG clip-path IDs to avoid collisions between P1/P2.</summary>
+        </member>
+        <member name="T:Program">
+            <summary>
+            Auto-generated public partial Program class for top-level statement apps.
+            </summary>
+        </member>
+    </members>
+</doc>

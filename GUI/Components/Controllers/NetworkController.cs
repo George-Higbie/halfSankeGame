@@ -1,3 +1,9 @@
+// <copyright file="NetworkController.cs" company="Snake PS9">
+// Copyright (c) 2026 Alex Waldmann & George Higbie. All rights reserved.
+// </copyright>
+// Authors: Alex Waldmann, George Higbie
+// Date: 2026-04-12
+
 using System;
 using System.IO;
 using System.Net.Sockets;
@@ -9,9 +15,6 @@ using GUI.Components.Models;
 
 namespace GUI.Components.Controllers
 {
-    // Minimal network controller that connects to the server, reads line-delimited JSON
-    // and raises events for the GameController to consume.
-
     /// <summary>
     /// Handles the TCP connection to the Snake server, parsing the line-delimited
     /// protocol (player ID, world size, then JSON objects) and raising typed events.
@@ -57,6 +60,7 @@ namespace GUI.Components.Controllers
         /// <summary>Whether the underlying TCP client is currently connected.</summary>
         public bool IsConnected => _client?.Connected ?? false;
 
+        /// <summary>Initializes a new instance of the <see cref="NetworkController"/> class.</summary>
         public NetworkController() { }
 
         /// <summary>Connects to the server, sends the player name and skin index, and starts the read loop.</summary>
@@ -101,14 +105,8 @@ namespace GUI.Components.Controllers
         /// <summary>Disconnects and clears connection state.</summary>
         public void Disconnect()
         {
-            if (_cts != null && !_cts.IsCancellationRequested)
-            {
-                try { _cts.Cancel(); } catch { }
-            }
-            try { _reader?.Dispose(); } catch { }
-            try { _writer?.Dispose(); } catch { }
-            try { _client?.Close(); } catch { }
-            try { _client?.Dispose(); } catch { }
+            CancelTokenSource();
+            DisposeConnectionResources();
 
             _client = null;
             _reader = null;
@@ -122,20 +120,40 @@ namespace GUI.Components.Controllers
         /// <summary>Releases all resources held by this controller.</summary>
         public void Dispose()
         {
-            if (_cts != null && !_cts.IsCancellationRequested)
-            {
-                try { _cts.Cancel(); } catch { }
-            }
-            try { _reader?.Dispose(); } catch { }
-            try { _writer?.Dispose(); } catch { }
-            try { _client?.Close(); } catch { }
-            try { _client?.Dispose(); } catch { }
+            CancelTokenSource();
+            DisposeConnectionResources();
         }
 
         private void NotifyDisconnected()
         {
-            try { _cts?.Cancel(); } catch { }
+            CancelTokenSource();
             OnDisconnected?.Invoke();
+        }
+
+        /// <summary>Cancels the token source if it has not already been cancelled.</summary>
+        private void CancelTokenSource()
+        {
+            if (_cts != null && !_cts.IsCancellationRequested)
+            {
+                try { _cts.Cancel(); }
+                catch (ObjectDisposedException) { /* already disposed — safe to ignore */ }
+            }
+        }
+
+        /// <summary>Disposes the reader, writer, and TCP client, tolerating already-disposed resources.</summary>
+        private void DisposeConnectionResources()
+        {
+            try { _reader?.Dispose(); }
+            catch (ObjectDisposedException) { /* already disposed — safe to ignore */ }
+
+            try { _writer?.Dispose(); }
+            catch (ObjectDisposedException) { /* already disposed — safe to ignore */ }
+
+            try { _client?.Close(); }
+            catch (ObjectDisposedException) { /* already disposed — safe to ignore */ }
+
+            try { _client?.Dispose(); }
+            catch (ObjectDisposedException) { /* already disposed — safe to ignore */ }
         }
 
         private async Task ReadLoopAsync(CancellationToken ct)
@@ -205,7 +223,7 @@ namespace GUI.Components.Controllers
             }
             catch (Exception)
             {
-                // read loop ended unexpectedly
+                // read loop ended — connection lost, stream closed, or cancellation
             }
             finally
             {

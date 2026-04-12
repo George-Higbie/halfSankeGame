@@ -16,7 +16,7 @@ lastDtbSucceeded
 
 [properties]
 AssemblyName=GUI
-CommandLineArgsForDesignTimeEvaluation=-langversion:14.0 -define:TRACE
+CommandLineArgsForDesignTimeEvaluation=-langversion:14.0 -define:TRACE -doc:"obj\Debug/net10.0/GUI.xml"
 CompilerGeneratedFilesOutputPath=
 MaxSupportedLangVersion=14.0
 ProjectAssetsFile=<PATH>obj/project.assets.json
@@ -38,6 +38,7 @@ TemporaryDependencyNodeTargetIdentifier=net10.0
 /nostdlib+
 /errorreport:prompt
 /warn:10
+/doc:obj/Debug/net10.0/GUI.xml
 /define:TRACE;DEBUG;NET;NET10_0;NETCOREAPP;NET5_0_OR_GREATER;NET6_0_OR_GREATER;NET7_0_OR_GREATER;NET8_0_OR_GREATER;NET9_0_OR_GREATER;NET10_0_OR_GREATER;NETCOREAPP1_0_OR_GREATER;NETCOREAPP1_1_OR_GREATER;NETCOREAPP2_0_OR_GREATER;NETCOREAPP2_1_OR_GREATER;NETCOREAPP2_2_OR_GREATER;NETCOREAPP3_0_OR_GREATER;NETCOREAPP3_1_OR_GREATER
 /highentropyva+
 /nullable:enable
@@ -49,7 +50,7 @@ TemporaryDependencyNodeTargetIdentifier=net10.0
 /out:obj/Debug/net10.0/GUI.dll
 /refout:obj/Debug/net10.0/refint/GUI.dll
 /target:exe
-/warnaserror-
+/warnaserror+
 /utf8output
 /deterministic+
 /langversion:14.0
@@ -66,6 +67,7 @@ Components/Models/
  Snake.cs
  SnakeSkin.cs
  Wall.cs
+Components/Rendering/SnakeRenderer.cs
 obj/Debug/net10.0/
  .NETCoreApp,Version=v10.0.AssemblyAttributes.cs
  EmbeddedAttribute.cs
@@ -433,6 +435,7 @@ Components/
   NotFound.razor
   SnakeGUI.razor
  Routes.razor
+ Shared/SkinGrid.razor
  _Imports.razor
 
 [dynamicFiles]
@@ -449,4 +452,5 @@ Components/
   NotFound.razor
   SnakeGUI.razor
  Routes.razor
+ Shared/SkinGrid.razor
  _Imports.razor

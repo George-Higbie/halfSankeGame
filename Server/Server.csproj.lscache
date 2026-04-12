@@ -15,8 +15,19 @@ primary
 lastDtbSucceeded
 
 [properties]
+AssemblyName=Server
+CommandLineArgsForDesignTimeEvaluation=-langversion:14.0 -define:TRACE
+CompilerGeneratedFilesOutputPath=
+MaxSupportedLangVersion=14.0
+ProjectAssetsFile=<PATH>obj/project.assets.json
+RootNamespace=SnakeGame
+RunAnalyzers=
+RunAnalyzersDuringLiveAnalysis=
+SolutionPath=<PATH>../Snake.sln
+TargetFrameworkIdentifier=.NETCoreApp
 TargetPath=<PATH>bin/Debug/net10.0/Server.dll
 TargetRefPath=<PATH>obj/Debug/net10.0/ref/Server.dll
+TemporaryDependencyNodeTargetIdentifier=net10.0
 
 [commandLineArguments]
 /noconfig
