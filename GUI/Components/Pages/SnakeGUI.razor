@@ -76,8 +76,7 @@
 @* ── Scoreboard Overlay ── *@
 @if (_showScoreboard && GameController.PlayerId.HasValue)
 {
-    var sbStyle = GetScoreboardStyle();
-    <div class="scoreboard-overlay @(sbStyle.dither ? "scoreboard-dithered" : "")" style="opacity: @sbStyle.opacity.ToString("F2");">
+    <div id="scoreboardOverlay" class="scoreboard-overlay">
         <strong>SCOREBOARD</strong>
         <ul>
             @foreach (var s in GameController.GetSnakes().Where(x => x.Alive == true).OrderByDescending(x => x.Score ?? 0))
@@ -242,6 +241,10 @@
         font-family: 'Segoe UI', system-ui, sans-serif;
         font-size: 0.85rem;
         min-width: 180px;
+        -webkit-mask-repeat: repeat;
+        mask-repeat: repeat;
+        -webkit-mask-size: 5px 5px;
+        mask-size: 5px 5px;
     }
     .scoreboard-overlay strong {
         display: block;
@@ -270,14 +273,6 @@
     }
     .scoreboard-overlay li.self {
         background: rgba(76,175,80,0.2);
-    }
-    .scoreboard-dithered {
-        -webkit-mask-image: radial-gradient(circle 2px at 6px 6px, black 1px, transparent 1.5px);
-        mask-image: radial-gradient(circle 2px at 6px 6px, black 1px, transparent 1.5px);
-        -webkit-mask-size: 12px 12px;
-        mask-size: 12px 12px;
-        -webkit-mask-repeat: repeat;
-        mask-repeat: repeat;
     }
 
     /* Death overlay */
@@ -440,26 +435,31 @@
         public void Reset() { X = 0; Y = 0; Initialized = false; }
     }
 
-    private (double opacity, bool dither) GetScoreboardStyle()
-    {
-        // Scoreboard overlay is at top:12, left:12, roughly 200x(rows*24+40)
-        const double sbLeft = 12, sbTop = 12, sbWidth = 200, sbHeight = 200;
-        const double fadeStart = 180;   // start fading when head is this far from scoreboard center
-        const double fadeEnd = 30;      // fully transparent at this distance
+    // Dither: compute star radius from snake-to-scoreboard distance.
+    // Positive r = dithered (star shapes in mask). Negative = no dithering.
+    // JS receives this every frame and builds the SVG mask directly on the DOM.
+    private const double DitherCell = 5.0;
+    private const double DitherHalf = DitherCell / 2.0;
+    private const double DitherMaxR = DitherHalf * 2.0;   // overflows cell → clips to solid
+    private const double DitherMinR = DitherHalf * 0.12;   // ~0.3px → always visible dots
 
-        double sbCx = sbLeft + sbWidth / 2;
-        double sbCy = sbTop + sbHeight / 2;
-        double dx = _p1HeadScreenX - sbCx;
-        double dy = _p1HeadScreenY - sbCy;
+    private double ComputeDitherRadius()
+    {
+        const double sbLeft = 12, sbTop = 12, sbRight = 12 + 212, sbBottom = 12 + 180;
+        const double fadeDistance = 80.0;
+
+        double nearX = Math.Clamp(_p1HeadScreenX, sbLeft, sbRight);
+        double nearY = Math.Clamp(_p1HeadScreenY, sbTop, sbBottom);
+        double dx = _p1HeadScreenX - nearX;
+        double dy = _p1HeadScreenY - nearY;
         double dist = Math.Sqrt(dx * dx + dy * dy);
 
-        if (dist >= fadeStart) return (1.0, false);
-        if (dist <= fadeEnd)
-            return (0.02, true);
+        if (dist >= fadeDistance) return -1; // signal: no dithering
 
-        double t = (fadeStart - dist) / (fadeStart - fadeEnd);
-        double opacity = 1.0 - t * 0.98;
-        return (opacity, t > 0.3);
+        double tLinear = 1.0 - dist / fadeDistance;
+        double t = tLinear * tLinear;
+
+        return DitherMaxR - t * (DitherMaxR - DitherMinR);
     }
 
     // ==================== Lifecycle ====================
@@ -834,6 +834,13 @@
         }
 
         await _context.EndBatchAsync();
+
+        // Update scoreboard dither mask every frame via JS (bypasses Blazor render cycle)
+        if (_showScoreboard && GameController.PlayerId.HasValue)
+        {
+            double ditherR = ComputeDitherRadius();
+            await JsRuntime.InvokeVoidAsync("updateScoreboardDither", ditherR);
+        }
     }
 
     private async Task DrawViewport(
