@@ -11,5 +11,8 @@ GUI/obj/
 GUI.Tests/bin/
 GUI.Tests/obj/
 
+# Coverage output
+coverage-results/
+
 # Crash dumps
 core
