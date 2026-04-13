@@ -611,6 +611,21 @@ public class Wall
 }
 public class World
 {
+	private const uint SpawnSafetyFrames = 60u;
+	private const int DeathDropGrowthUnitsPerGroup = 4;
+	private const double DeathDropLengthPerGrowthUnit = Constants.GrowthFrames * Constants.SnakeSpeed;
+	private const int DeathDropMaxPowerupsPerBurst = 4;
+	private const uint DeathDropInitialDelayFrames = 12u;
+	private const double DeathExplosionSpeedUnitsPerSecond = 400.0;
+	private const double SimulationFramesPerSecond = 60.0;
+
+	private sealed class PendingDeathDrop
+	{
+		public Vector2D Location { get; init; } = new Vector2D();
+		public uint SpawnTime { get; init; }
+		public int Count { get; init; }
+	}
+
 	private int respawnRate;
 
 	private uint time;
@@ -618,6 +633,7 @@ public class World
 	private uint nextPowerup;
 
 	private Random rand = new Random();
+	private readonly List<PendingDeathDrop> pendingDeathDrops = new List<PendingDeathDrop>();
 
 	public int Size { get; private set; }
 
@@ -656,6 +672,7 @@ public class World
 		Snakes.Clear();
 		Walls.Clear();
 		Powerups.Clear();
+		pendingDeathDrops.Clear();
 	}
 
 	public uint GetTime()
@@ -718,7 +735,7 @@ public class World
 			{
 				foreach (Snake s in Snakes.Values)
 				{
-					if (!s.Alive) continue;
+					if (!ShouldSnakeBlockSpace(s)) continue;
 					foreach (var (v1, v2) in s.Segments())
 					{
 						double segMinX = Math.Min(v1.X_f, v2.X_f) - padding;
@@ -766,77 +783,140 @@ public class World
 		const double bodyBuffer = 50.0;
 		const double headDangerZone = 300.0;
 		const double corridorWidth = 50.0;
-		const int maxAttempts = 500;
-		for (int attempt = 0; attempt < maxAttempts; attempt++)
+		const int maxSpawnSearchAttempts = 2500;
+
+		bool hasBestCandidate = false;
+		uint bestSafetyFrames = 0u;
+		Vector2D bestTail = new Vector2D();
+		Vector2D bestHead = new Vector2D();
+
+		int attempt = 0;
+		while (attempt < maxSpawnSearchAttempts)
 		{
 			Vector2D t = RandomLocation(120f);
 			Vector2D h = RandomSnakeDirection(t);
-			Vector2D dir = h - t;
-			dir.Normalize();
 
-			bool clear = true;
-
-			// 1) 150 units clear ahead of spawn (walls only)
-			for (double d = 0; d <= aheadClearance && clear; d += step)
+			if (!IsSpawnGeometrySafe(t, h, aheadClearance, step, bodyBuffer, headDangerZone, corridorWidth))
 			{
-				Vector2D checkPoint = h + dir * d;
-				foreach (Wall wall in Walls.Values)
-				{
-					if (wall.Intersects(checkPoint, 50.0))
-					{
-						clear = false;
-						break;
-					}
-				}
+				attempt++;
+				continue;
 			}
-			if (!clear) continue;
 
-			// 2) No overlap with existing snake bodies at spawn location
-			foreach (Snake s in Snakes.Values)
+			uint safetyFrames = GetSpawnSafetyFrames(t, h, SpawnSafetyFrames);
+			if (safetyFrames >= SpawnSafetyFrames)
 			{
-				if (!s.Alive) continue;
-				foreach (var (v1, v2) in s.Segments())
-				{
-					double segMinX = Math.Min(v1.X_f, v2.X_f) - bodyBuffer;
-					double segMaxX = Math.Max(v1.X_f, v2.X_f) + bodyBuffer;
-					double segMinY = Math.Min(v1.Y_f, v2.Y_f) - bodyBuffer;
-					double segMaxY = Math.Max(v1.Y_f, v2.Y_f) + bodyBuffer;
-					if (h.X_f >= segMinX && h.X_f <= segMaxX &&
-					    h.Y_f >= segMinY && h.Y_f <= segMaxY)
-					{
-						clear = false;
-						break;
-					}
-				}
-				if (!clear) break;
+				return (t, h);
 			}
-			if (!clear) continue;
 
-			// 3) Not within 150 units ahead of any other alive snake's head
-			foreach (Snake s in Snakes.Values)
+			if (!hasBestCandidate || safetyFrames > bestSafetyFrames)
 			{
-				if (!s.Alive) continue;
-				Vector2D sDir = s.direction;
-				if (sDir == null) continue;
-				Vector2D toSpawn = h - s.Head;
-				double dot = toSpawn.X_f * sDir.X_f + toSpawn.Y_f * sDir.Y_f;
-				if (dot > 0 && dot <= headDangerZone)
-				{
-					double cross = Math.Abs(toSpawn.X_f * sDir.Y_f - toSpawn.Y_f * sDir.X_f);
-					if (cross < corridorWidth)
-					{
-						clear = false;
-						break;
-					}
-				}
+				hasBestCandidate = true;
+				bestSafetyFrames = safetyFrames;
+				bestTail = t;
+				bestHead = h;
 			}
-			if (!clear) continue;
 
-			return (t, h);
+			attempt++;
 		}
-		// Fallback: best-effort spawn if no perfect spot found
+
+		if (hasBestCandidate)
+		{
+			return (bestTail, bestHead);
+		}
+
+		// Emergency fallback if no geometric-safe candidate was found.
 		Vector2D fallbackT = RandomLocation(120f);
 		return (fallbackT, RandomSnakeDirection(fallbackT));
+	}
+
+	private bool IsSpawnGeometrySafe(Vector2D tail, Vector2D head, double aheadClearance, double step, double bodyBuffer, double headDangerZone, double corridorWidth)
+	{
+		Vector2D dir = head - tail;
+		dir.Normalize();
+
+		for (double d = 0; d <= aheadClearance; d += step)
+		{
+			Vector2D checkPoint = head + dir * d;
+			foreach (Wall wall in Walls.Values)
+			{
+				if (wall.Intersects(checkPoint, 50.0))
+				{
+					return false;
+				}
+			}
+		}
+
+		foreach (Snake s in Snakes.Values)
+		{
+			if (!ShouldSnakeBlockSpace(s)) continue;
+			foreach (var (v1, v2) in s.Segments())
+			{
+				double segMinX = Math.Min(v1.X_f, v2.X_f) - bodyBuffer;
+				double segMaxX = Math.Max(v1.X_f, v2.X_f) + bodyBuffer;
+				double segMinY = Math.Min(v1.Y_f, v2.Y_f) - bodyBuffer;
+				double segMaxY = Math.Max(v1.Y_f, v2.Y_f) + bodyBuffer;
+				if (head.X_f >= segMinX && head.X_f <= segMaxX &&
+				    head.Y_f >= segMinY && head.Y_f <= segMaxY)
+				{
+					return false;
+				}
+			}
+		}
+
+		foreach (Snake s in Snakes.Values)
+		{
+			if (!s.Alive) continue;
+			Vector2D sDir = s.direction;
+			if (sDir == null) continue;
+			Vector2D toSpawn = head - s.Head;
+			double dot = toSpawn.X_f * sDir.X_f + toSpawn.Y_f * sDir.Y_f;
+			if (dot > 0 && dot <= headDangerZone)
+			{
+				double cross = Math.Abs(toSpawn.X_f * sDir.Y_f - toSpawn.Y_f * sDir.X_f);
+				if (cross < corridorWidth)
+				{
+					return false;
+				}
+			}
+		}
+
+		return true;
+	}
+
+	private uint GetSpawnSafetyFrames(Vector2D tail, Vector2D head, uint maxFrames)
+	{
+		Snake probe = new Snake("spawn_probe", tail, head, -1);
+		for (uint i = 0u; i < maxFrames; i++)
+		{
+			if (DoesSnakeCollide(probe))
+			{
+				return i;
+			}
+			probe.Update(time + i, Size);
+		}
+		return maxFrames;
+	}
+
+	private bool IsSpawnSafeForReactionWindow(Vector2D tail, Vector2D head)
+	{
+		return GetSpawnSafetyFrames(tail, head, SpawnSafetyFrames) >= SpawnSafetyFrames;
+	}
+
+	private bool ShouldSnakeBlockSpace(Snake s)
+	{
+		if (s.IsDisconnected())
+		{
+			return false;
+		}
+		if (s.Alive)
+		{
+			return true;
+		}
+		if (time < s.GetLastDeath())
+		{
+			return false;
+		}
+		return time - s.GetLastDeath() <= SpawnSafetyFrames;
 	}
 
 	public void ProcessCommand(Snake s, string cmd)
@@ -869,6 +949,8 @@ public class World
 
 	public void Update()
 	{
+		ProcessPendingDeathDrops();
+
 		if (nextPowerup == 0)
 		{
 			nextPowerup = time + (uint)rand.Next(0, 67);
@@ -882,7 +964,6 @@ public class World
 			nextPowerup = time + (uint)rand.Next(0, 67);
 		}
 		_ = Size / 2;
-		List<(Vector2D loc, bool drop)> deathDrops = new List<(Vector2D, bool)>();
 		foreach (Snake value in Snakes.Values)
 		{
 			if (!value.Alive)
@@ -900,26 +981,104 @@ public class World
 			}
 			if (DoesSnakeCollide(value))
 			{
-				int segCount = 0;
-				foreach (var (v1, v2) in value.Segments())
-				{
-					if (segCount % 3 == 0)
-					{
-						var midX = (v1.X_f + v2.X_f) / 2.0;
-						var midY = (v1.Y_f + v2.Y_f) / 2.0;
-						deathDrops.Add((new Vector2D(midX, midY), true));
-					}
-					segCount++;
-				}
+				QueueDeathDrops(value);
 				value.Die(time);
 			}
 		}
-		foreach (var (loc, _) in deathDrops)
-		{
-			Powerup p = new Powerup(loc);
-			Powerups.Add(p.GetID(), p);
-		}
 		time++;
+	}
+
+	private void QueueDeathDrops(Snake snake)
+	{
+		var segments = snake.Segments().ToList();
+		if (segments.Count == 0)
+		{
+			return;
+		}
+
+		double totalLength = segments.Sum(segment => (segment.v2 - segment.v1).Length());
+		if (totalLength <= 0.0)
+		{
+			return;
+		}
+
+		double grownLength = Math.Max(0.0, totalLength - Constants.MinSnakeLength);
+		int grownUnits = (int)Math.Floor(grownLength / DeathDropLengthPerGrowthUnit);
+		int groupCount = grownUnits / DeathDropGrowthUnitsPerGroup;
+		if (groupCount <= 0)
+		{
+			return;
+		}
+
+		double groupLength = DeathDropGrowthUnitsPerGroup * DeathDropLengthPerGrowthUnit;
+		for (int groupIndex = 0; groupIndex < groupCount; groupIndex++)
+		{
+			double groupStartDistance = groupIndex * groupLength;
+			double groupEndDistance = Math.Min(groupStartDistance + groupLength, grownLength);
+			int powerupCount = RollDeathDropPowerupCount();
+
+			for (int i = 0; i < powerupCount; i++)
+			{
+				double dropDistance = groupStartDistance + rand.NextDouble() * (groupEndDistance - groupStartDistance);
+				Vector2D dropLocation = GetExplosionLocationAtDistance(segments, dropDistance);
+				double travelSeconds = dropDistance / DeathExplosionSpeedUnitsPerSecond;
+				uint delayFrames = (uint)Math.Round(travelSeconds * SimulationFramesPerSecond);
+				pendingDeathDrops.Add(new PendingDeathDrop
+				{
+					Location = dropLocation,
+					SpawnTime = time + DeathDropInitialDelayFrames + delayFrames,
+					Count = 1
+				});
+			}
+		}
+	}
+
+	private Vector2D GetExplosionLocationAtDistance(IReadOnlyList<(Vector2D v1, Vector2D v2)> segments, double distanceFromHead)
+	{
+		double traversed = 0.0;
+		for (int i = segments.Count - 1; i >= 0; i--)
+		{
+			var (v1, v2) = segments[i];
+			double segDx = v1.X_f - v2.X_f;
+			double segDy = v1.Y_f - v2.Y_f;
+			double segLength = Math.Sqrt(segDx * segDx + segDy * segDy);
+			if (distanceFromHead <= traversed + segLength)
+			{
+				double t = segLength <= 0.0 ? 0.0 : (distanceFromHead - traversed) / segLength;
+				double x = v2.X_f + (v1.X_f - v2.X_f) * t;
+				double y = v2.Y_f + (v1.Y_f - v2.Y_f) * t;
+				return new Vector2D(x, y);
+			}
+
+			traversed += segLength;
+		}
+
+		return new Vector2D(segments[0].v1);
+	}
+
+	private int RollDeathDropPowerupCount()
+	{
+		return rand.Next(1, DeathDropMaxPowerupsPerBurst + 1);
+	}
+
+	private void ProcessPendingDeathDrops()
+	{
+		for (int i = pendingDeathDrops.Count - 1; i >= 0; i--)
+		{
+			PendingDeathDrop drop = pendingDeathDrops[i];
+			if (drop.SpawnTime > time)
+			{
+				continue;
+			}
+
+			for (int count = 0; count < drop.Count; count++)
+			{
+				Powerup p = new Powerup(drop.Location);
+				Powerups.Add(p.GetID(), p);
+			}
+
+			pendingDeathDrops.RemoveAt(i);
+		}
 	}
 
 	public bool CanMove(Snake s, Vector2D dir)
@@ -937,7 +1096,7 @@ public class World
 
 	public bool DoesSnakeCollide(Snake s)
 	{
-		foreach (Snake item in Snakes.Values.Where((Snake x) => x.Alive))
+		foreach (Snake item in Snakes.Values.Where((Snake x) => ShouldSnakeBlockSpace(x)))
 		{
 			if (s.CollidesWith(item))
 			{

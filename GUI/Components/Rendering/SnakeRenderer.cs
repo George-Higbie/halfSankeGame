@@ -32,6 +32,8 @@ public class SnakeRenderer
     private const double ParticleLifespan = 0.6;
     private const int GridSpacing = 50;
     private const int BrickSize = 25;
+    private const double PowerupPopDurationSeconds = 0.11;
+    private const double PowerupPopBounceAmplitude = 0.30;
 
     // ==================== Inner Types ====================
 
@@ -70,6 +72,7 @@ public class SnakeRenderer
     // ==================== Wall Cache ====================
 
     private readonly Dictionary<GameController, HashSet<(int cx, int cy)>> _wallCaches = new();
+    private readonly Dictionary<int, DateTime> _powerupFirstSeenAt = new();
 
     /// <summary>Clears the cached wall cell grid for the given controller.</summary>
     public void ClearWallCache(GameController gc) => _wallCaches.Remove(gc);
@@ -111,11 +114,13 @@ public class SnakeRenderer
         SnakeSkin playerSkin, bool drawGrid, bool highQuality)
     {
         var worldSize = gc.WorldSize ?? 2000;
+        var snakes = gc.GetSnakes();
+        var playerId = gc.PlayerId;
 
         Snake? centerSnake = null;
         if (centerTargetId.HasValue)
-            centerSnake = gc.GetSnakes().FirstOrDefault(s => s.Id == centerTargetId.Value);
-        centerSnake ??= gc.GetPlayerSnake();
+            centerSnake = snakes.FirstOrDefault(s => s.Id == centerTargetId.Value);
+        centerSnake ??= playerId.HasValue ? snakes.FirstOrDefault(s => s.Id == playerId.Value) : null;
 
         double targetCamX = 0, targetCamY = 0;
         if (showDeath) { targetCamX = frozenCamX; targetCamY = frozenCamY; }
@@ -153,7 +158,7 @@ public class SnakeRenderer
         await ctx.TranslateAsync(camX, camY);
 
         (double headX, double headY)? headScreen = null;
-        var playerSnake = gc.GetPlayerSnake();
+        var playerSnake = playerId.HasValue ? snakes.FirstOrDefault(s => s.Id == playerId.Value) : null;
         if (playerSnake?.Body?.Count > 0)
         {
             var h = playerSnake.Body[^1];
@@ -166,7 +171,7 @@ public class SnakeRenderer
         await DrawDeathAnimations(ctx, elapsed, deathAnims);
         await DrawWalls(ctx, gc, highQuality);
         await DrawPowerups(ctx, gc, highQuality);
-        await DrawSnakes(ctx, gc, deathAnims, showDeath, playerSkin);
+        await DrawSnakes(ctx, snakes, playerId, deathAnims, showDeath, playerSkin);
 
         await ctx.RestoreAsync();
         return headScreen;
@@ -453,35 +458,66 @@ public class SnakeRenderer
 
     // ==================== Powerups ====================
 
-    private static async Task DrawPowerups(Canvas2DContext ctx, GameController gc, bool highQuality)
+    private async Task DrawPowerups(Canvas2DContext ctx, GameController gc, bool highQuality)
     {
         var now = DateTime.UtcNow;
+        var activePowerupIds = new HashSet<int>();
         foreach (var p in gc.GetPowerups())
         {
             if (p.Location == null || p.Died) continue;
+
+            activePowerupIds.Add(p.Id);
+            if (!_powerupFirstSeenAt.TryGetValue(p.Id, out var firstSeenAt))
+            {
+                firstSeenAt = now;
+                _powerupFirstSeenAt[p.Id] = now;
+            }
+
+            double ageSeconds = (now - firstSeenAt).TotalSeconds;
+            double popScale = ComputePowerupPopScale(ageSeconds);
             var pulse = highQuality ? Math.Abs(Math.Sin(now.TimeOfDay.TotalSeconds * 5)) * 3 : 0;
+            double outerRadius = (8 + pulse) * popScale;
+            double innerRadius = 4 * Math.Max(0.35, popScale);
 
             await ctx.SetFillStyleAsync("gold");
             await ctx.BeginPathAsync();
-            await ctx.ArcAsync(p.Location.X, p.Location.Y, 8 + pulse, 0, Math.PI * 2);
+            await ctx.ArcAsync(p.Location.X, p.Location.Y, outerRadius, 0, Math.PI * 2);
             await ctx.FillAsync();
 
             if (highQuality)
             {
                 await ctx.SetFillStyleAsync("yellow");
                 await ctx.BeginPathAsync();
-                await ctx.ArcAsync(p.Location.X, p.Location.Y, 4, 0, Math.PI * 2);
+                await ctx.ArcAsync(p.Location.X, p.Location.Y, innerRadius, 0, Math.PI * 2);
                 await ctx.FillAsync();
             }
         }
+
+        if (_powerupFirstSeenAt.Count > activePowerupIds.Count)
+        {
+            foreach (var id in _powerupFirstSeenAt.Keys.Where(id => !activePowerupIds.Contains(id)).ToList())
+                _powerupFirstSeenAt.Remove(id);
+        }
+    }
+
+    private static double ComputePowerupPopScale(double ageSeconds)
+    {
+        if (ageSeconds <= 0)
+            return 0.1;
+        if (ageSeconds >= PowerupPopDurationSeconds)
+            return 1.0;
+
+        double t = ageSeconds / PowerupPopDurationSeconds;
+        double easeOut = 1.0 - Math.Pow(1.0 - t, 4.0);
+        double bounce = Math.Sin(t * Math.PI * 1.25) * PowerupPopBounceAmplitude * (1.0 - t * 0.6);
+        return Math.Max(0.1, easeOut + bounce);
     }
 
     // ==================== Snakes ====================
 
-    private async Task DrawSnakes(Canvas2DContext ctx, GameController gc, Dictionary<int, DeathAnim> deathAnims, bool showDeath, SnakeSkin playerSkin)
+    private async Task DrawSnakes(Canvas2DContext ctx, IReadOnlyList<Snake> snakes, int? playerId, Dictionary<int, DeathAnim> deathAnims, bool showDeath, SnakeSkin playerSkin)
     {
-        var playerId = gc.GetPlayerSnake()?.Id;
-        foreach (var s in gc.GetSnakes())
+        foreach (var s in snakes)
         {
             if (s.Disconnected == true) continue;
             if (s.Alive != true) continue;
@@ -500,7 +536,7 @@ public class SnakeRenderer
         }
 
         // Create death animations for any snake that just died
-        foreach (var s in gc.GetSnakes())
+        foreach (var s in snakes)
         {
             if ((s.Died == true || s.Alive != true) && s.Body?.Count >= 2 && !deathAnims.ContainsKey(s.Id) && s.Disconnected != true)
             {
