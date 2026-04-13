@@ -174,90 +174,221 @@ else
 @code
 {
     // ==================== Constants ====================
+
+    /// <summary>Target milliseconds per frame (~60 FPS).</summary>
     private const int FrameDelayMs = 16;
 
     // ==================== Private Fields ====================
+
+    /// <summary>Canvas renderer responsible for all drawing operations.</summary>
     private readonly SnakeRenderer _renderer = new();
+
+    /// <summary>Blazor reference to the main game canvas element.</summary>
     private BECanvasComponent? _canvasReference;
+
+    /// <summary>2D drawing context for the main game canvas.</summary>
     private Canvas2DContext? _context;
+
+    /// <summary>Blazor reference to the P1 skin-preview mini canvas.</summary>
     private BECanvasComponent? _p1PreviewRef;
+
+    /// <summary>Blazor reference to the P2 skin-preview mini canvas.</summary>
     private BECanvasComponent? _p2PreviewRef;
+
+    /// <summary>Cached 2D context for drawing the P1 skin preview.</summary>
     private Canvas2DContext? _p1PreviewCtx;
+
+    /// <summary>Cached 2D context for drawing the P2 skin preview.</summary>
     private Canvas2DContext? _p2PreviewCtx;
+
+    /// <summary>Last skin index drawn in the P1 preview (avoids redundant redraws).</summary>
     private int _lastP1PreviewSkin = -1;
+
+    /// <summary>Last skin index drawn in the P2 preview (avoids redundant redraws).</summary>
     private int _lastP2PreviewSkin = -1;
+
+    /// <summary>Token source for cancelling the render loop on dispose.</summary>
     private CancellationTokenSource? _renderCts;
+
+    /// <summary>High-resolution timer for delta-time calculations.</summary>
     private readonly Stopwatch _frameStopwatch = new();
+
+    /// <summary>Current viewport width in CSS pixels.</summary>
     private int _viewW = 1920;
+
+    /// <summary>Current viewport height in CSS pixels.</summary>
     private int _viewH = 1080;
 
     // P1 per-player state (uses DI-injected controllers)
+
+    /// <summary>Active death-explosion animations keyed by snake ID.</summary>
     private readonly Dictionary<int, SnakeRenderer.DeathAnim> _p1DeathAnims = new();
+
+    /// <summary>Whether the P1 death overlay is displayed.</summary>
     private bool _showDeathScreen;
+
+    /// <summary>World X to center the camera on while the death overlay is shown.</summary>
     private int _frozenCameraX;
+
+    /// <summary>World Y to center the camera on while the death overlay is shown.</summary>
     private int _frozenCameraY;
+
+    /// <summary>Buffered direction commands waiting to be sent (max 2).</summary>
     private readonly List<string> _p1MoveQueue = new();
+
+    /// <summary>Synchronization lock protecting <see cref="_p1MoveQueue"/>.</summary>
     private readonly object _p1MoveLock = new();
+
+    /// <summary>Last direction sent to the server, used for 180-degree rejection.</summary>
     private string? _p1LastSentDir;
+
+    /// <summary>Frames remaining before the next queued move can be sent (cooldown timer).</summary>
     private int _p1MoveCooldown;
+
+    /// <summary>Snake ID to follow with the camera (spectator mode), or null for own snake.</summary>
     private int? _centerTargetSnakeId;
+
+    /// <summary>Set to true once the server sends P1's first body, enabling input.</summary>
     private volatile bool _p1Ready;
+
+    /// <summary>Smooth-camera tracking state for the P1 viewport.</summary>
     private readonly SnakeRenderer.CameraState _p1Cam = new();
 
     // P2 per-player state (manually created controllers)
+
+    /// <summary>Network controller for the second player (created at runtime, not via DI).</summary>
     private NetworkController? _p2Network;
+
+    /// <summary>Game controller for the second player (created at runtime, not via DI).</summary>
     private GameController? _p2Game;
+
+    /// <summary>Active death-explosion animations for P2 keyed by snake ID.</summary>
     private readonly Dictionary<int, SnakeRenderer.DeathAnim> _p2DeathAnims = new();
+
+    /// <summary>Whether the P2 death overlay is displayed.</summary>
     private bool _p2ShowDeath;
+
+    /// <summary>World X to center P2's camera on while the death overlay is shown.</summary>
     private int _p2FrozenCamX;
+
+    /// <summary>World Y to center P2's camera on while the death overlay is shown.</summary>
     private int _p2FrozenCamY;
+
+    /// <summary>Buffered direction commands for P2 waiting to be sent (max 2).</summary>
     private readonly List<string> _p2MoveQueue = new();
+
+    /// <summary>Synchronization lock protecting <see cref="_p2MoveQueue"/>.</summary>
     private readonly object _p2MoveLock = new();
+
+    /// <summary>Last direction P2 sent to the server, used for 180-degree rejection.</summary>
     private string? _p2LastSentDir;
+
+    /// <summary>Frames remaining before P2's next queued move can be sent.</summary>
     private int _p2MoveCooldown;
+
+    /// <summary>Set to true once the server sends P2's first body, enabling input.</summary>
     private volatile bool _p2Ready;
+
+    /// <summary>Smooth-camera tracking state for the P2 viewport.</summary>
     private readonly SnakeRenderer.CameraState _p2Cam = new();
 
-    // Head screen position for scoreboard dithering
-    private double _p1HeadScreenX, _p1HeadScreenY;
+    /// <summary>P1 head screen-space X for scoreboard dither calculation.</summary>
+    private double _p1HeadScreenX;
+
+    /// <summary>P1 head screen-space Y for scoreboard dither calculation.</summary>
+    private double _p1HeadScreenY;
 
     // ==================== UI State ====================
+
+    /// <summary>Server hostname or IP address.</summary>
     private string Host { get; set; } = "localhost";
+
+    /// <summary>Server TCP port.</summary>
     private int Port { get; set; } = 11000;
+
+    /// <summary>Player 1 display name sent to the server.</summary>
     private string PlayerName { get; set; } = "Player 1";
+
+    /// <summary>Player 2 display name sent to the server.</summary>
     private string Player2Name { get; set; } = "Player 2";
+
+    /// <summary>Human-readable connection status for P1 ("Disconnected", "Connecting...", "Connected", "Error: ...").</summary>
     private string _status = "Disconnected";
+
+    /// <summary>Human-readable connection status for P2.</summary>
     private string _p2Status = "Disconnected";
+
+    /// <summary>Whether split-screen (2-player) mode is active.</summary>
     private bool _splitScreen;
+
+    /// <summary>Previous frame's split-screen state, used to detect toggle transitions.</summary>
     private bool _wasSplitScreen;
+
+    /// <summary>Whether the background grid overlay is drawn.</summary>
     private bool _drawGrid = true;
+
+    /// <summary>Whether high-quality (textured) rendering is enabled.</summary>
     private bool _highQualityTextures = true;
+
+    /// <summary>Whether the single-player sidebar is expanded.</summary>
     private bool _sidebarOpen = true;
+
+    /// <summary>Whether the P1 sidebar is expanded (split-screen mode).</summary>
     private bool _p1SidebarOpen = true;
+
+    /// <summary>Whether the P2 sidebar is expanded (split-screen mode).</summary>
     private bool _p2SidebarOpen = true;
+
+    /// <summary>Current keyboard-focused menu item index for P1.</summary>
     private int _p1MenuIndex = 1;
+
+    /// <summary>Current keyboard-focused menu item index for P2.</summary>
     private int _p2MenuIndex = 1;
+
+    /// <summary>Maximum menu index for P1 (0 = Name, 1 = Skin, 2 = Connect, 3–6 = toggles).</summary>
     private const int P1MenuMax = 6;
+
+    /// <summary>Maximum menu index for P2 (0 = Name, 1 = Skin, 2 = Connect).</summary>
     private const int P2MenuMax = 2;
+
+    /// <summary>Number of columns in the skin picker grid (used for 2D keyboard navigation).</summary>
     private const int SkinGridCols = 5;
+
+    /// <summary>Whether P1 is actively playing (connected and not on death screen).</summary>
     private bool _p1Playing => GameController.PlayerId.HasValue && !_showDeathScreen;
+
+    /// <summary>Whether P2 is actively playing (connected and not on death screen).</summary>
     private bool _p2Playing => _p2Game?.PlayerId.HasValue == true && !_p2ShowDeath;
+
+    /// <summary>Whether the scoreboard overlay is visible.</summary>
     private bool _showScoreboard = true;
+
+    /// <summary>Index into <see cref="SnakeSkin.AllSkins"/> for P1's selected skin.</summary>
     private int _p1SkinIndex;
+
+    /// <summary>Index into <see cref="SnakeSkin.AllSkins"/> for P2's selected skin.</summary>
     private int _p2SkinIndex = 1;
+
+    /// <summary>Maps each direction to its 180-degree opposite for queue rejection logic.</summary>
     private static readonly Dictionary<string, string> _opposites = new()
     {
         ["up"] = "down", ["down"] = "up", ["left"] = "right", ["right"] = "left"
     };
 
-    // Dither: compute star radius from snake-to-scoreboard distance.
-    // Positive r = dithered (star shapes in mask). Negative = no dithering.
-    // JS receives this every frame and builds the SVG mask directly on the DOM.
+    /// <summary>Dither cell grid size in pixels.</summary>
     private const double DitherCell = 5.0;
-    private const double DitherHalf = DitherCell / 2.0;
-    private const double DitherMaxR = DitherHalf * 2.0;   // overflows cell → clips to solid
-    private const double DitherMinR = DitherHalf * 0.40;   // 1px → always visible dots
 
+    /// <summary>Half the dither cell size (radius baseline).</summary>
+    private const double DitherHalf = DitherCell / 2.0;
+
+    /// <summary>Maximum dither star radius (overflows cell, clips to solid).</summary>
+    private const double DitherMaxR = DitherHalf * 2.0;
+
+    /// <summary>Minimum dither star radius (always-visible dots).</summary>
+    private const double DitherMinR = DitherHalf * 0.40;
+
+    /// <summary>Computes the dither star radius based on distance between P1's head and the scoreboard rectangle.</summary>
+    /// <returns>Positive radius for dithering, or -1 when the head is far enough that no dither is needed.</returns>
     private double ComputeDitherRadius()
     {
         const double sbLeft = 12, sbTop = 12, sbRight = 12 + 212, sbBottom = 12 + 180;
@@ -279,6 +410,7 @@ else
 
     // ==================== Lifecycle ====================
 
+    /// <summary>Initializes canvases, JS interop, P2 controllers, and starts the render loop.</summary>
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (!firstRender) return;
@@ -301,6 +433,7 @@ else
         _p2Game.OnPlayerDied += OnP2Died;
     }
 
+    /// <summary>Stops the render loop and disposes P2 network resources.</summary>
     public void Dispose()
     {
         try { _renderCts?.Cancel(); } catch { }
@@ -311,6 +444,8 @@ else
 
     // ==================== Input ====================
 
+    /// <summary>Called by JS when the browser viewport is resized.</summary>
+    /// <param name="dims">Two-element array [width, height] in CSS pixels.</param>
     [JSInvokable]
     public void UpdateViewportSize(int[] dims)
     {
@@ -321,6 +456,12 @@ else
         }
     }
 
+    /// <summary>
+    /// Routes a keyboard event to the appropriate handler: sidebar navigation,
+    /// menu activation, movement queueing, or respawn/connect shortcuts.
+    /// Called from JS via <c>invokeMethodAsync('HandleKeyPress', key)</c>.
+    /// </summary>
+    /// <param name="key">The <c>KeyboardEvent.code</c> value (e.g. "KeyW", "ArrowUp", "Tab").</param>
     [JSInvokable]
     public void HandleKeyPress(string key)
     {
@@ -459,6 +600,15 @@ else
         }
     }
 
+    /// <summary>
+    /// Moves the keyboard focus index within a sidebar menu. When the focus is
+    /// on the skin picker (index 1), left/right cycle through skins and up/down
+    /// navigate between skin-grid rows.
+    /// </summary>
+    /// <param name="idx">Reference to the menu index being navigated.</param>
+    /// <param name="max">Maximum valid menu index.</param>
+    /// <param name="dir">Direction string ("up", "down", "left", "right").</param>
+    /// <param name="isP1">True for P1 (modifies <see cref="_p1SkinIndex"/>), false for P2.</param>
     private void NavigateMenu(ref int idx, int max, string dir, bool isP1)
     {
         int skinCount = SnakeSkin.AllSkins.Length;
@@ -492,6 +642,7 @@ else
         }
     }
 
+    /// <summary>Activates the P1 menu item at the current <see cref="_p1MenuIndex"/>.</summary>
     private void ActivateP1MenuItem()
     {
         switch (_p1MenuIndex)
@@ -509,6 +660,7 @@ else
         }
     }
 
+    /// <summary>Activates the P2 menu item at the current <see cref="_p2MenuIndex"/>.</summary>
     private void ActivateP2MenuItem()
     {
         switch (_p2MenuIndex)
@@ -522,18 +674,24 @@ else
         }
     }
 
+    /// <summary>Opens the P1 sidebar and defaults focus to the skin picker.</summary>
     private void OpenP1Sidebar()
     {
         if (_splitScreen) _p1SidebarOpen = true; else _sidebarOpen = true;
         _p1MenuIndex = 1;
     }
 
+    /// <summary>Opens the P2 sidebar and defaults focus to the skin picker.</summary>
     private void OpenP2Sidebar()
     {
         _p2SidebarOpen = true;
         _p2MenuIndex = 1;
     }
 
+    /// <summary>
+    /// Infers the current heading direction from the snake's last two body segments.
+    /// Returns null if the snake has fewer than two segments.
+    /// </summary>
     private static string? GetSnakeHeading(GameController gc)
     {
         var snake = gc.GetPlayerSnake();
@@ -548,6 +706,10 @@ else
             : (dy > 0 ? "down" : "up");
     }
 
+    /// <summary>
+    /// Appends a direction command to the move queue (max 2 entries).
+    /// Drops duplicates of the most recent queued direction.
+    /// </summary>
     private static void EnqueueMove(List<string> queue, object queueLock, string cmd)
     {
         lock (queueLock)
@@ -558,6 +720,12 @@ else
         }
     }
 
+    /// <summary>
+    /// Dequeues the next valid move from the buffer, handling three special cases:
+    /// cancel-pair (both directions undo each other), 180-reorder (send the valid
+    /// intermediate turn first), and normal single/pair dequeue.
+    /// </summary>
+    /// <returns>The direction string to send, or null if no valid move is available.</returns>
     private static string? DequeueMove(List<string> queue, object queueLock, GameController gc, ref string? lastSentDir)
     {
         lock (queueLock)
@@ -608,6 +776,7 @@ else
 
     // ==================== Connection ====================
 
+    /// <summary>Disconnects any existing P1 session and connects with current settings.</summary>
     private async Task Connect()
     {
         _showDeathScreen = false;
@@ -634,6 +803,7 @@ else
         }
     }
 
+    /// <summary>Disconnects any existing P2 session and connects with current settings.</summary>
     private async Task ConnectP2()
     {
         if (_p2Game == null) return;
@@ -660,6 +830,7 @@ else
         }
     }
 
+    /// <summary>Sends a respawn command for P1 and dismisses the death overlay.</summary>
     private void RespawnP1()
     {
         _showDeathScreen = false;
@@ -670,6 +841,7 @@ else
         _ = InvokeAsync(StateHasChanged);
     }
 
+    /// <summary>Sends a respawn command for P2 and dismisses the death overlay.</summary>
     private void RespawnP2()
     {
         _p2ShowDeath = false;
@@ -682,6 +854,7 @@ else
 
     // ==================== Game State ====================
 
+    /// <summary>Handles the P1 death event: freezes camera and shows the death overlay.</summary>
     private void OnP1Died()
     {
         if (_showDeathScreen) return;
@@ -699,6 +872,7 @@ else
         _ = InvokeAsync(StateHasChanged);
     }
 
+    /// <summary>Handles the P2 death event: freezes camera and shows the death overlay.</summary>
     private void OnP2Died()
     {
         if (_p2ShowDeath) return;
@@ -718,6 +892,11 @@ else
 
     // ==================== Render Loop ====================
 
+    /// <summary>
+    /// Main render loop running at ~60 FPS. Each tick dequeues buffered moves
+    /// (respecting the 3-frame cooldown), draws the frame, and triggers
+    /// periodic Blazor UI updates.
+    /// </summary>
     private async Task RenderLoopAsync(CancellationToken ct)
     {
         _frameStopwatch.Start();
@@ -772,6 +951,10 @@ else
 
     // ==================== Drawing ====================
 
+    /// <summary>
+    /// Draws a single frame: clears the canvas, renders viewports (single or split),
+    /// updates skin previews, and pushes the dither mask to JS.
+    /// </summary>
     private async Task DrawFrame()
     {
         if (_context == null) return;
