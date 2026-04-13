@@ -17,45 +17,127 @@ let canvasEl = null;
 /** @type {HTMLElement|null} The scoreboard overlay element used for dither masking. */
 let _ditherEl = null;
 
-/** @type {number} Last dither radius sent to the DOM (avoids redundant writes). */
+/** @type {number} Last left-half dither radius (avoids redundant writes). */
+let _lastDitherL = -999;
+/** @type {number} Last right-half dither radius (avoids redundant writes). */
 let _lastDitherR = -999;
 
+/** @type {OffscreenCanvas|HTMLCanvasElement|null} Reusable offscreen canvas for dither mask. */
+let _ditherCanvas = null;
+
 /**
- * Updates the scoreboard overlay's CSS mask to produce a star-shaped dither
- * effect that fades the scoreboard when the player's head is nearby.
- * Called from C# every frame via JSInterop.
- * @param {number} r - Star radius in pixels. Negative = no dithering (fully visible).
+ * Draws a star shape at the given position on a 2D context.
+ * @param {CanvasRenderingContext2D} c - The drawing context.
+ * @param {number} cx - Center X.
+ * @param {number} cy - Center Y.
+ * @param {number} r  - Star radius.
  */
-window.updateScoreboardDither = (r) => {
+function _drawDitherStar(c, cx, cy, r) {
+    const pull = r * 0.35;
+    const py = cy - r, by = cy + r, rx = cx + r, lx = cx - r;
+    c.moveTo(cx, py);
+    c.bezierCurveTo(cx + pull, py + pull, rx - pull, cy - pull, rx, cy);
+    c.bezierCurveTo(rx - pull, cy + pull, cx + pull, by - pull, cx, by);
+    c.bezierCurveTo(cx - pull, by - pull, lx + pull, cy + pull, lx, cy);
+    c.bezierCurveTo(lx + pull, cy - pull, cx - pull, py + pull, cx, py);
+}
+
+/**
+ * Fills an area of the offscreen canvas with a tiled dither star pattern.
+ * @param {CanvasRenderingContext2D} c - The drawing context.
+ * @param {number} x0 - Left x.
+ * @param {number} w  - Width to fill.
+ * @param {number} h  - Height to fill.
+ * @param {number} r  - Star radius. Negative = solid white (no dither).
+ */
+function _fillDitherRegion(c, x0, w, h, r) {
+    if (r < 0) {
+        c.fillStyle = 'white';
+        c.fillRect(x0, 0, w, h);
+        return;
+    }
+    const cell = 5, half = 2.5;
+    c.fillStyle = 'white';
+    c.beginPath();
+    for (let y = 0; y < h; y += cell) {
+        for (let x = x0; x < x0 + w; x += cell) {
+            _drawDitherStar(c, x + half, y + half, r);
+        }
+    }
+    c.fill();
+}
+
+/**
+ * Updates the scoreboard overlay's CSS mask. Supports uniform dithering (single
+ * player mode) and split dithering (left half reacts to P1, right half to P2).
+ * @param {number} leftR  - Star radius for the left half (or full board if rightR < 0).
+ * @param {number} rightR - Star radius for the right half. -1 = single-mode (use leftR for all).
+ */
+window.updateScoreboardDither = (leftR, rightR) => {
     if (!_ditherEl) _ditherEl = document.getElementById('scoreboardOverlay');
     if (!_ditherEl) return;
 
-    // Avoid redundant DOM writes — only update if radius changed meaningfully
-    if (Math.abs(r - _lastDitherR) < 0.01) return;
-    _lastDitherR = r;
+    // Avoid redundant DOM writes
+    if (Math.abs(leftR - _lastDitherL) < 0.01 && Math.abs(rightR - _lastDitherR) < 0.01) return;
+    _lastDitherL = leftR;
+    _lastDitherR = rightR;
 
-    if (r < 0) {
-        // No dithering — clear mask, fully visible
-        _ditherEl.style.maskImage = '';
-        _ditherEl.style.webkitMaskImage = '';
+    const isSplit = rightR >= -0.5;  // rightR === -1 means single-player mode
+
+    // ── Single-player mode ──
+    if (!isSplit) {
+        if (leftR < 0) {
+            _ditherEl.style.maskImage = '';
+            _ditherEl.style.webkitMaskImage = '';
+            return;
+        }
+        const cell = 5, half = 2.5;
+        const pull = leftR * 0.35;
+        const py = half - leftR, by = half + leftR, rx = half + leftR, lx = half - leftR;
+        const d = `M ${half.toFixed(2)} ${py.toFixed(2)} ` +
+            `C ${(half + pull).toFixed(2)} ${(py + pull).toFixed(2)}, ${(rx - pull).toFixed(2)} ${(half - pull).toFixed(2)}, ${rx.toFixed(2)} ${half.toFixed(2)} ` +
+            `C ${(rx - pull).toFixed(2)} ${(half + pull).toFixed(2)}, ${(half + pull).toFixed(2)} ${(by - pull).toFixed(2)}, ${half.toFixed(2)} ${by.toFixed(2)} ` +
+            `C ${(half - pull).toFixed(2)} ${(by - pull).toFixed(2)}, ${(lx + pull).toFixed(2)} ${(half + pull).toFixed(2)}, ${lx.toFixed(2)} ${half.toFixed(2)} ` +
+            `C ${(lx + pull).toFixed(2)} ${(half - pull).toFixed(2)}, ${(half - pull).toFixed(2)} ${(py + pull).toFixed(2)}, ${half.toFixed(2)} ${py.toFixed(2)} Z`;
+        const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='${cell}' height='${cell}'><path d='${d}' fill='white'/></svg>`;
+        const url = `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+        _ditherEl.style.maskImage = url;
+        _ditherEl.style.webkitMaskImage = url;
+        _ditherEl.style.maskSize = '5px 5px';
+        _ditherEl.style.webkitMaskSize = '5px 5px';
+        _ditherEl.style.maskRepeat = 'repeat';
+        _ditherEl.style.webkitMaskRepeat = 'repeat';
         return;
     }
 
-    const cell = 5, half = 2.5;
-    const pull = r * 0.35;
-    const py = half - r, by = half + r, rx = half + r, lx = half - r;
+    // ── Split-screen mode: canvas-based per-half dither ──
+    const rect = _ditherEl.getBoundingClientRect();
+    const w = Math.round(rect.width) || 220;
+    const h = Math.round(rect.height) || 180;
 
-    const d = `M ${half.toFixed(2)} ${py.toFixed(2)} ` +
-        `C ${(half + pull).toFixed(2)} ${(py + pull).toFixed(2)}, ${(rx - pull).toFixed(2)} ${(half - pull).toFixed(2)}, ${rx.toFixed(2)} ${half.toFixed(2)} ` +
-        `C ${(rx - pull).toFixed(2)} ${(half + pull).toFixed(2)}, ${(half + pull).toFixed(2)} ${(by - pull).toFixed(2)}, ${half.toFixed(2)} ${by.toFixed(2)} ` +
-        `C ${(half - pull).toFixed(2)} ${(by - pull).toFixed(2)}, ${(lx + pull).toFixed(2)} ${(half + pull).toFixed(2)}, ${lx.toFixed(2)} ${half.toFixed(2)} ` +
-        `C ${(lx + pull).toFixed(2)} ${(half - pull).toFixed(2)}, ${(half - pull).toFixed(2)} ${(py + pull).toFixed(2)}, ${half.toFixed(2)} ${py.toFixed(2)} Z`;
+    // Allocate a hidden <canvas> once; reuse every frame
+    if (!_ditherCanvas) {
+        _ditherCanvas = document.createElement('canvas');
+    }
+    if (_ditherCanvas.width !== w || _ditherCanvas.height !== h) {
+        _ditherCanvas.width = w;
+        _ditherCanvas.height = h;
+    }
 
-    const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='${cell}' height='${cell}'><path d='${d}' fill='white'/></svg>`;
-    const url = `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+    const c = _ditherCanvas.getContext('2d');
+    c.clearRect(0, 0, w, h);
 
+    const midX = Math.round(w / 2);
+    _fillDitherRegion(c, 0, midX, h, leftR);
+    _fillDitherRegion(c, midX, w - midX, h, rightR);
+
+    const url = `url("${_ditherCanvas.toDataURL()}")`;
     _ditherEl.style.maskImage = url;
     _ditherEl.style.webkitMaskImage = url;
+    _ditherEl.style.maskSize = `${w}px ${h}px`;
+    _ditherEl.style.webkitMaskSize = `${w}px ${h}px`;
+    _ditherEl.style.maskRepeat = 'no-repeat';
+    _ditherEl.style.webkitMaskRepeat = 'no-repeat';
 };
 
 /**

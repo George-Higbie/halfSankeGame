@@ -518,7 +518,7 @@ public class SnakeRenderer
             }
         }
 
-        if (_powerupFirstSeenAt.Count > activePowerupIds.Count)
+        if (activePowerupIds.Count > 0 && _powerupFirstSeenAt.Count > activePowerupIds.Count)
         {
             foreach (var id in _powerupFirstSeenAt.Keys.Where(id => !activePowerupIds.Contains(id)).ToList())
                 _powerupFirstSeenAt.Remove(id);

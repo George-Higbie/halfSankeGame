@@ -132,7 +132,7 @@ input.menu-focused {
     position: fixed;
     top: 12px;
     left: 12px;
-    z-index: 5;
+    z-index: 25;
     background: rgba(18, 18, 24, 0.75);
     backdrop-filter: blur(8px);
     border-radius: 8px;
@@ -141,10 +141,11 @@ input.menu-focused {
     font-family: 'Segoe UI', system-ui, sans-serif;
     font-size: 0.85rem;
     min-width: 180px;
-    -webkit-mask-repeat: repeat;
-    mask-repeat: repeat;
-    -webkit-mask-size: 5px 5px;
-    mask-size: 5px 5px;
+}
+.scoreboard-overlay.scoreboard-split {
+    left: 50vw;
+    transform: translateX(-50%);
+    top: 36px;
 }
 .scoreboard-overlay strong {
     display: block;

@@ -118,7 +118,7 @@ else
 @* ── Scoreboard Overlay ── *@
 @if (_showScoreboard && GameController.PlayerId.HasValue)
 {
-    <div id="scoreboardOverlay" class="scoreboard-overlay">
+    <div id="scoreboardOverlay" class="scoreboard-overlay @(_splitScreen ? "scoreboard-split" : "")">
         <strong>SCOREBOARD</strong>
         <ul>
             @foreach (var s in GameController.GetSnakes().Where(x => x.Alive == true).OrderByDescending(x => x.Score ?? 0))
@@ -301,6 +301,12 @@ else
     /// <summary>P1 head screen-space Y for scoreboard dither calculation.</summary>
     private double _p1HeadScreenY;
 
+    /// <summary>P2 head screen-space X for scoreboard dither calculation.</summary>
+    private double _p2HeadScreenX;
+
+    /// <summary>P2 head screen-space Y for scoreboard dither calculation.</summary>
+    private double _p2HeadScreenY;
+
     // ==================== UI State ====================
 
     /// <summary>Server hostname or IP address.</summary>
@@ -390,25 +396,44 @@ else
     /// <summary>Minimum dither star radius (always-visible dots).</summary>
     private const double DitherMinR = DitherHalf * 0.40;
 
-    /// <summary>Computes the dither star radius based on distance between P1's head and the scoreboard rectangle.</summary>
-    /// <returns>Positive radius for dithering, or -1 when the head is far enough that no dither is needed.</returns>
-    private double ComputeDitherRadius()
+    /// <summary>Computes a dither star radius for a single head position relative to a scoreboard rectangle.</summary>
+    private double ComputeDitherForHead(double headX, double headY, double sbLeft, double sbTop, double sbRight, double sbBottom)
     {
-        const double sbLeft = 12, sbTop = 12, sbRight = 12 + 212, sbBottom = 12 + 180;
         const double fadeDistance = 80.0;
-
-        double nearX = Math.Clamp(_p1HeadScreenX, sbLeft, sbRight);
-        double nearY = Math.Clamp(_p1HeadScreenY, sbTop, sbBottom);
-        double dx = _p1HeadScreenX - nearX;
-        double dy = _p1HeadScreenY - nearY;
+        double nearX = Math.Clamp(headX, sbLeft, sbRight);
+        double nearY = Math.Clamp(headY, sbTop, sbBottom);
+        double dx = headX - nearX;
+        double dy = headY - nearY;
         double dist = Math.Sqrt(dx * dx + dy * dy);
 
-        if (dist >= fadeDistance) return -1; // signal: no dithering
+        if (dist >= fadeDistance) return -1;
 
         double tLinear = 1.0 - dist / fadeDistance;
         double t = tLinear * tLinear;
-
         return DitherMaxR - t * (DitherMaxR - DitherMinR);
+    }
+
+    /// <summary>Computes dither radius for single-player mode (full scoreboard).</summary>
+    private double ComputeDitherRadius()
+    {
+        if (_showDeathScreen) return -1;
+        return ComputeDitherForHead(_p1HeadScreenX, _p1HeadScreenY, 12, 12, 12 + 212, 12 + 180);
+    }
+
+    /// <summary>Computes per-half dither radii for split-screen mode. Left half reacts to P1, right half to P2.</summary>
+    private (double leftR, double rightR) ComputeSplitDitherRadii()
+    {
+        // Scoreboard is centered at 50vw; approximate pixel bounds
+        double centerX = _viewW / 2.0;
+        double sbW = 212, sbH = 180;
+        double sbLeft = centerX - sbW / 2.0;
+        double sbTop = 36;
+        double sbRight = centerX + sbW / 2.0;
+        double sbBottom = sbTop + sbH;
+
+        double leftR = _showDeathScreen ? -1 : ComputeDitherForHead(_p1HeadScreenX, _p1HeadScreenY, sbLeft, sbTop, centerX, sbBottom);
+        double rightR = _p2ShowDeath ? -1 : ComputeDitherForHead(_p2HeadScreenX, _p2HeadScreenY, centerX, sbTop, sbRight, sbBottom);
+        return (leftR, rightR);
     }
 
     // ==================== Lifecycle ====================
@@ -987,9 +1012,10 @@ else
             if (p1Head.HasValue) { _p1HeadScreenX = p1Head.Value.headX; _p1HeadScreenY = p1Head.Value.headY; }
 
             // Right viewport — P2 (Arrows)
-            await _renderer.DrawViewport(_context, _p2Game, _p2DeathAnims, _p2ShowDeath,
+            var p2Head = await _renderer.DrawViewport(_context, _p2Game, _p2DeathAnims, _p2ShowDeath,
                 _p2FrozenCamX, _p2FrozenCamY, null,
                 halfW, 0, halfW, _viewH, elapsed, _p2Cam, SnakeSkin.AllSkins[_p2SkinIndex], _drawGrid, _highQualityTextures);
+            if (p2Head.HasValue) { _p2HeadScreenX = p2Head.Value.headX; _p2HeadScreenY = p2Head.Value.headY; }
 
             // Divider line
             await _context.SetStrokeStyleAsync("rgba(255,255,255,0.4)");
@@ -999,11 +1025,13 @@ else
             await _context.LineToAsync(halfW, _viewH);
             await _context.StrokeAsync();
 
-            // Player labels
+            // Player labels (centered in each viewport half)
             await _context.SetFillStyleAsync("rgba(255,255,255,0.5)");
             await _context.SetFontAsync("bold 16px Arial");
-            await _context.FillTextAsync("P1 (WASD)", 10, 24);
-            await _context.FillTextAsync("P2 (Arrows)", halfW + 10, 24);
+            await _context.SetTextAlignAsync(TextAlign.Center);
+            await _context.FillTextAsync("P1 (WASD)", halfW / 2, 24);
+            await _context.FillTextAsync("P2 (Arrows)", halfW + halfW / 2, 24);
+            await _context.SetTextAlignAsync(TextAlign.Start);
         }
         else
         {
@@ -1046,8 +1074,16 @@ else
         // Update scoreboard dither mask every frame via JS (bypasses Blazor render cycle)
         if (_showScoreboard && GameController.PlayerId.HasValue)
         {
-            double ditherR = ComputeDitherRadius();
-            await JsRuntime.InvokeVoidAsync("updateScoreboardDither", ditherR);
+            if (_splitScreen)
+            {
+                var (leftR, rightR) = ComputeSplitDitherRadii();
+                await JsRuntime.InvokeVoidAsync("updateScoreboardDither", leftR, rightR);
+            }
+            else
+            {
+                double ditherR = ComputeDitherRadius();
+                await JsRuntime.InvokeVoidAsync("updateScoreboardDither", ditherR, -1.0);
+            }
         }
     }
 }
