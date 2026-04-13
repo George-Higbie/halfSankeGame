@@ -136,9 +136,6 @@ public class Snake
 	[JsonProperty(PropertyName = "join")]
 	public bool joined { get; private set; }
 
-	[JsonProperty(PropertyName = "skin")]
-	public int skin { get; set; }
-
 	public int NumSegments => body.Count - 1;
 
 	public float speed { get; set; } = 3f;
@@ -198,11 +195,10 @@ public class Snake
 		joined = false;
 	}
 
-	public Snake(string _name, Vector2D t, Vector2D h, int _id, int _skin = 0)
+	public Snake(string _name, Vector2D t, Vector2D h, int _id)
 	{
 		ID = _id;
 		name = _name;
-		skin = _skin;
 		body = new LinkedList<Vector2D>();
 		body.AddLast(t);
 		body.AddLast(h);
@@ -611,21 +607,6 @@ public class Wall
 }
 public class World
 {
-	private const uint SpawnSafetyFrames = 60u;
-	private const int DeathDropGrowthUnitsPerGroup = 4;
-	private const double DeathDropLengthPerGrowthUnit = Constants.GrowthFrames * Constants.SnakeSpeed;
-	private const int DeathDropMaxPowerupsPerBurst = 4;
-	private const uint DeathDropInitialDelayFrames = 12u;
-	private const double DeathExplosionSpeedUnitsPerSecond = 400.0;
-	private const double SimulationFramesPerSecond = 60.0;
-
-	private sealed class PendingDeathDrop
-	{
-		public Vector2D Location { get; init; } = new Vector2D();
-		public uint SpawnTime { get; init; }
-		public int Count { get; init; }
-	}
-
 	private int respawnRate;
 
 	private uint time;
@@ -633,7 +614,6 @@ public class World
 	private uint nextPowerup;
 
 	private Random rand = new Random();
-	private readonly List<PendingDeathDrop> pendingDeathDrops = new List<PendingDeathDrop>();
 
 	public int Size { get; private set; }
 
@@ -672,7 +652,6 @@ public class World
 		Snakes.Clear();
 		Walls.Clear();
 		Powerups.Clear();
-		pendingDeathDrops.Clear();
 	}
 
 	public uint GetTime()
@@ -680,9 +659,9 @@ public class World
 		return time;
 	}
 
-	public Snake AddSnake(string name, Vector2D t, Vector2D h, int ID, int skin = 0)
+	public Snake AddSnake(string name, Vector2D t, Vector2D h, int ID)
 	{
-		Snake snake = new Snake(name, t, h, ID, skin);
+		Snake snake = new Snake(name, t, h, ID);
 		snake.Join();
 		Snakes.Add(ID, snake);
 		return snake;
@@ -700,10 +679,10 @@ public class World
 		};
 	}
 
-	public Snake AddRandomSnake(string name, int ID, int skin = 0)
+	public Snake AddRandomSnake(string name, int ID)
 	{
 		var (t, h) = RandomSnakeSpawn();
-		return AddSnake(name, t, h, ID, skin);
+		return AddSnake(name, t, h, ID);
 	}
 
 	public Powerup AddRandomPowerup()
@@ -715,14 +694,15 @@ public class World
 
 	public Vector2D RandomLocation(float padding)
 	{
-		const int maxAttempts = 500;
-		for (int attempt = 0; attempt < maxAttempts; attempt++)
+		Vector2D vector2D;
+		bool flag;
+		do
 		{
 			float num = (float)rand.NextDouble() * 2f - 1f;
 			float num2 = (float)rand.NextDouble() * 2f - 1f;
-			Vector2D vector2D = new Vector2D(num, num2);
+			vector2D = new Vector2D(num, num2);
 			vector2D *= (double)(Size / 2);
-			bool flag = true;
+			flag = true;
 			foreach (Wall value in Walls.Values)
 			{
 				if (value.Intersects(vector2D, 50f + padding))
@@ -735,7 +715,7 @@ public class World
 			{
 				foreach (Snake s in Snakes.Values)
 				{
-					if (!ShouldSnakeBlockSpace(s)) continue;
+					if (!s.Alive) continue;
 					foreach (var (v1, v2) in s.Segments())
 					{
 						double segMinX = Math.Min(v1.X_f, v2.X_f) - padding;
@@ -752,228 +732,109 @@ public class World
 					if (!flag) break;
 				}
 			}
-			if (flag) return vector2D;
 		}
-		// Fallback: return a random position ignoring snake proximity
-		Vector2D fallback;
-		do
-		{
-			float fx = (float)rand.NextDouble() * 2f - 1f;
-			float fy = (float)rand.NextDouble() * 2f - 1f;
-			fallback = new Vector2D(fx, fy);
-			fallback *= (double)(Size / 2);
-			bool wallClear = true;
-			foreach (Wall value in Walls.Values)
-			{
-				if (value.Intersects(fallback, 50f + padding))
-				{
-					wallClear = false;
-					break;
-				}
-			}
-			if (wallClear) return fallback;
-		}
-		while (true);
+		while (!flag);
+		return vector2D;
 	}
 
 	private (Vector2D tail, Vector2D head) RandomSnakeSpawn()
 	{
-		const double aheadClearance = 300.0;
-		const double step = 30.0;
-		const double bodyBuffer = 50.0;
-		const double headDangerZone = 300.0;
-		const double corridorWidth = 50.0;
-		const int maxSpawnSearchAttempts = 2500;
-
-		bool hasBestCandidate = false;
-		uint bestSafetyFrames = 0u;
-		Vector2D bestTail = new Vector2D();
-		Vector2D bestHead = new Vector2D();
-
-		int attempt = 0;
-		while (attempt < maxSpawnSearchAttempts)
+		const double clearance = 300.0;
+		const int maxAttempts = 200;
+		for (int attempt = 0; attempt < maxAttempts; attempt++)
 		{
 			Vector2D t = RandomLocation(120f);
 			Vector2D h = RandomSnakeDirection(t);
+			Vector2D dir = h - t;
+			dir.Normalize();
+			Vector2D checkPoint = h + dir * clearance;
 
-			if (!IsSpawnGeometrySafe(t, h, aheadClearance, step, bodyBuffer, headDangerZone, corridorWidth))
-			{
-				attempt++;
-				continue;
-			}
-
-			uint safetyFrames = GetSpawnSafetyFrames(t, h, SpawnSafetyFrames);
-			if (safetyFrames >= SpawnSafetyFrames)
-			{
-				return (t, h);
-			}
-
-			if (!hasBestCandidate || safetyFrames > bestSafetyFrames)
-			{
-				hasBestCandidate = true;
-				bestSafetyFrames = safetyFrames;
-				bestTail = t;
-				bestHead = h;
-			}
-
-			attempt++;
-		}
-
-		if (hasBestCandidate)
-		{
-			return (bestTail, bestHead);
-		}
-
-		// Emergency fallback if no geometric-safe candidate was found.
-		Vector2D fallbackT = RandomLocation(120f);
-		return (fallbackT, RandomSnakeDirection(fallbackT));
-	}
-
-	private bool IsSpawnGeometrySafe(Vector2D tail, Vector2D head, double aheadClearance, double step, double bodyBuffer, double headDangerZone, double corridorWidth)
-	{
-		Vector2D dir = head - tail;
-		dir.Normalize();
-
-		for (double d = 0; d <= aheadClearance; d += step)
-		{
-			Vector2D checkPoint = head + dir * d;
+			bool clear = true;
 			foreach (Wall wall in Walls.Values)
 			{
 				if (wall.Intersects(checkPoint, 50.0))
 				{
-					return false;
+					clear = false;
+					break;
 				}
 			}
-		}
-
-		foreach (Snake s in Snakes.Values)
-		{
-			if (!ShouldSnakeBlockSpace(s)) continue;
-			foreach (var (v1, v2) in s.Segments())
+			if (clear)
 			{
-				double segMinX = Math.Min(v1.X_f, v2.X_f) - bodyBuffer;
-				double segMaxX = Math.Max(v1.X_f, v2.X_f) + bodyBuffer;
-				double segMinY = Math.Min(v1.Y_f, v2.Y_f) - bodyBuffer;
-				double segMaxY = Math.Max(v1.Y_f, v2.Y_f) + bodyBuffer;
-				if (head.X_f >= segMinX && head.X_f <= segMaxX &&
-				    head.Y_f >= segMinY && head.Y_f <= segMaxY)
+				foreach (Snake s in Snakes.Values)
 				{
-					return false;
+					if (!s.Alive) continue;
+					foreach (var (v1, v2) in s.Segments())
+					{
+						double segMinX = Math.Min(v1.X_f, v2.X_f) - 30.0;
+						double segMaxX = Math.Max(v1.X_f, v2.X_f) + 30.0;
+						double segMinY = Math.Min(v1.Y_f, v2.Y_f) - 30.0;
+						double segMaxY = Math.Max(v1.Y_f, v2.Y_f) + 30.0;
+						if (checkPoint.X_f >= segMinX && checkPoint.X_f <= segMaxX &&
+						    checkPoint.Y_f >= segMinY && checkPoint.Y_f <= segMaxY)
+						{
+							clear = false;
+							break;
+						}
+					}
+					if (!clear) break;
 				}
 			}
+			if (clear) return (t, h);
 		}
-
-		foreach (Snake s in Snakes.Values)
-		{
-			if (!s.Alive) continue;
-			Vector2D sDir = s.direction;
-			if (sDir == null) continue;
-			Vector2D toSpawn = head - s.Head;
-			double dot = toSpawn.X_f * sDir.X_f + toSpawn.Y_f * sDir.Y_f;
-			if (dot > 0 && dot <= headDangerZone)
-			{
-				double cross = Math.Abs(toSpawn.X_f * sDir.Y_f - toSpawn.Y_f * sDir.X_f);
-				if (cross < corridorWidth)
-				{
-					return false;
-				}
-			}
-		}
-
-		return true;
-	}
-
-	private uint GetSpawnSafetyFrames(Vector2D tail, Vector2D head, uint maxFrames)
-	{
-		Snake probe = new Snake("spawn_probe", tail, head, -1);
-		for (uint i = 0u; i < maxFrames; i++)
-		{
-			if (DoesSnakeCollide(probe))
-			{
-				return i;
-			}
-			probe.Update(time + i, Size);
-		}
-		return maxFrames;
-	}
-
-	private bool IsSpawnSafeForReactionWindow(Vector2D tail, Vector2D head)
-	{
-		return GetSpawnSafetyFrames(tail, head, SpawnSafetyFrames) >= SpawnSafetyFrames;
-	}
-
-	private bool ShouldSnakeBlockSpace(Snake s)
-	{
-		if (s.IsDisconnected())
-		{
-			return false;
-		}
-		if (s.Alive)
-		{
-			return true;
-		}
-		if (time < s.GetLastDeath())
-		{
-			return false;
-		}
-		return time - s.GetLastDeath() <= SpawnSafetyFrames;
+		// Fallback: best-effort spawn if no perfect spot found
+		Vector2D fallbackT = RandomLocation(120f);
+		return (fallbackT, RandomSnakeDirection(fallbackT));
 	}
 
 	public void ProcessCommand(Snake s, string cmd)
 	{
-		JsonSerializerSettings val = new JsonSerializerSettings();
-		val.MissingMemberHandling = (MissingMemberHandling)0;
-		ControlCommand controlCommand;
-		try
-		{
-			controlCommand = JsonConvert.DeserializeObject<ControlCommand>(cmd, val);
-		}
-		catch (Exception)
-		{
-			return;
-		}
-		if (controlCommand.moving == "respawn")
-		{
-			if (!s.Alive && !s.name.Contains("spectate"))
-			{
-				var (t, h) = RandomSnakeSpawn();
-				s.Respawn(t, h);
-			}
-			return;
-		}
 		if (s.Alive)
 		{
+			JsonSerializerSettings val = new JsonSerializerSettings();
+			val.MissingMemberHandling = (MissingMemberHandling)1;
+			ControlCommand controlCommand;
+			try
+			{
+				controlCommand = JsonConvert.DeserializeObject<ControlCommand>(cmd, val);
+			}
+			catch (Exception)
+			{
+				return;
+			}
 			s.ChangeDirection(controlCommand.moving, this);
 		}
 	}
 
 	public void Update()
 	{
-		ProcessPendingDeathDrops();
-
 		if (nextPowerup == 0)
 		{
-			nextPowerup = time + (uint)rand.Next(0, 67);
+			nextPowerup = time + (uint)rand.Next(0, 200);
 		}
 		if (nextPowerup <= time)
 		{
-			if (Powerups.Count < 60)
+			if (Powerups.Count < 20)
 			{
 				AddRandomPowerup();
 			}
-			nextPowerup = time + (uint)rand.Next(0, 67);
+			nextPowerup = time + (uint)rand.Next(0, 200);
 		}
 		_ = Size / 2;
 		foreach (Snake value in Snakes.Values)
 		{
 			if (!value.Alive)
 			{
+				if (time - value.GetLastDeath() >= respawnRate && !value.name.Contains("spectate"))
+				{
+					var (t, h) = RandomSnakeSpawn();
+					value.Respawn(t, h);
+				}
 				continue;
 			}
 			value.Update(time, Size);
 			foreach (Powerup value2 in Powerups.Values)
 			{
-				if (value2.IsAlive() && (value2.GetLocation() - value.Head).Length() <= 16.0)
+				if (value2.IsAlive() && (value2.GetLocation() - value.Head).Length() <= 10.0)
 				{
 					value.Powerup();
 					value2.Die();
@@ -981,104 +842,10 @@ public class World
 			}
 			if (DoesSnakeCollide(value))
 			{
-				QueueDeathDrops(value);
 				value.Die(time);
 			}
 		}
 		time++;
-	}
-
-	private void QueueDeathDrops(Snake snake)
-	{
-		var segments = snake.Segments().ToList();
-		if (segments.Count == 0)
-		{
-			return;
-		}
-
-		double totalLength = segments.Sum(segment => (segment.v2 - segment.v1).Length());
-		if (totalLength <= 0.0)
-		{
-			return;
-		}
-
-		double grownLength = Math.Max(0.0, totalLength - Constants.MinSnakeLength);
-		int grownUnits = (int)Math.Floor(grownLength / DeathDropLengthPerGrowthUnit);
-		int groupCount = grownUnits / DeathDropGrowthUnitsPerGroup;
-		if (groupCount <= 0)
-		{
-			return;
-		}
-
-		double groupLength = DeathDropGrowthUnitsPerGroup * DeathDropLengthPerGrowthUnit;
-		for (int groupIndex = 0; groupIndex < groupCount; groupIndex++)
-		{
-			double groupStartDistance = groupIndex * groupLength;
-			double groupEndDistance = Math.Min(groupStartDistance + groupLength, grownLength);
-			int powerupCount = RollDeathDropPowerupCount();
-
-			for (int i = 0; i < powerupCount; i++)
-			{
-				double dropDistance = groupStartDistance + rand.NextDouble() * (groupEndDistance - groupStartDistance);
-				Vector2D dropLocation = GetExplosionLocationAtDistance(segments, dropDistance);
-				double travelSeconds = dropDistance / DeathExplosionSpeedUnitsPerSecond;
-				uint delayFrames = (uint)Math.Round(travelSeconds * SimulationFramesPerSecond);
-				pendingDeathDrops.Add(new PendingDeathDrop
-				{
-					Location = dropLocation,
-					SpawnTime = time + DeathDropInitialDelayFrames + delayFrames,
-					Count = 1
-				});
-			}
-		}
-	}
-
-	private Vector2D GetExplosionLocationAtDistance(IReadOnlyList<(Vector2D v1, Vector2D v2)> segments, double distanceFromHead)
-	{
-		double traversed = 0.0;
-		for (int i = segments.Count - 1; i >= 0; i--)
-		{
-			var (v1, v2) = segments[i];
-			double segDx = v1.X_f - v2.X_f;
-			double segDy = v1.Y_f - v2.Y_f;
-			double segLength = Math.Sqrt(segDx * segDx + segDy * segDy);
-			if (distanceFromHead <= traversed + segLength)
-			{
-				double t = segLength <= 0.0 ? 0.0 : (distanceFromHead - traversed) / segLength;
-				double x = v2.X_f + (v1.X_f - v2.X_f) * t;
-				double y = v2.Y_f + (v1.Y_f - v2.Y_f) * t;
-				return new Vector2D(x, y);
-			}
-
-			traversed += segLength;
-		}
-
-		return new Vector2D(segments[0].v1);
-	}
-
-	private int RollDeathDropPowerupCount()
-	{
-		return rand.Next(1, DeathDropMaxPowerupsPerBurst + 1);
-	}
-
-	private void ProcessPendingDeathDrops()
-	{
-		for (int i = pendingDeathDrops.Count - 1; i >= 0; i--)
-		{
-			PendingDeathDrop drop = pendingDeathDrops[i];
-			if (drop.SpawnTime > time)
-			{
-				continue;
-			}
-
-			for (int count = 0; count < drop.Count; count++)
-			{
-				Powerup p = new Powerup(drop.Location);
-				Powerups.Add(p.GetID(), p);
-			}
-
-			pendingDeathDrops.RemoveAt(i);
-		}
 	}
 
 	public bool CanMove(Snake s, Vector2D dir)
@@ -1096,7 +863,7 @@ public class World
 
 	public bool DoesSnakeCollide(Snake s)
 	{
-		foreach (Snake item in Snakes.Values.Where((Snake x) => ShouldSnakeBlockSpace(x)))
+		foreach (Snake item in Snakes.Values.Where((Snake x) => x.Alive))
 		{
 			if (s.CollidesWith(item))
 			{

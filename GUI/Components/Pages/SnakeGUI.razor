@@ -45,15 +45,16 @@ else
         <label>Port</label>
         <input type="number" @bind="Port" />
     </div>
-    <div class="field-group @(_p1MenuIndex == 0 ? "menu-focused" : "")">
+    <div class="field-group">
         <label>@(_splitScreen ? "P1 Name" : "Name")</label>
-        <input id="p1NameInput" @bind="PlayerName" disabled="@(_p1Playing)" />
+        <input id="p1NameInput" class="@(_p1MenuIndex == 0 ? "menu-focused" : "")" @bind="PlayerName" disabled="@(_p1Playing)" />
     </div>
 
-    <div class="skin-section @(_p1MenuIndex == 1 ? "menu-focused" : "")" style="margin-top:6px; padding:4px;">
+    <div class="skin-section" style="margin-top:6px; padding:4px;">
         <label style="display:block;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.5px;opacity:0.6;margin-bottom:4px;">@(_splitScreen ? "P1 Skin" : "Skin")</label>
         <div class="skin-grid">
             <SkinGrid SelectedIndex="_p1SkinIndex"
+                      KeyboardFocusIndex="@(_p1MenuIndex == 1 ? _p1SkinIndex : -1)"
                       OnSkinSelected="((idx) => _p1SkinIndex = idx)"
                       IdPrefix="p1" />
         </div>
@@ -63,18 +64,15 @@ else
         </div>
     </div>
 
-    <div style="display:flex; gap:6px; margin-top:8px;">
-        <button class="btn-snake @(_p1MenuIndex == 2 ? "menu-focused" : "")" @onclick="(() => Connect())">@(_splitScreen ? "Connect P1" : "Connect")</button>
-        <button class="btn-snake btn-secondary @(_p1MenuIndex == 3 ? "menu-focused" : "")" @onclick="(() => Reconnect())">Reconnect</button>
-    </div>
+    <button class="btn-snake @(_p1MenuIndex == 2 ? "menu-focused" : "")" style="width:100%; margin-top:8px;" @onclick="(() => Connect())">@(_splitScreen ? "Connect P1" : "Connect")</button>
 
     <div class="status-line">@_status @if (_status == "Disconnected" || _status == "Game Over") { <span style="opacity:0.5; font-size:0.85em;">— @(_splitScreen ? "Left Shift" : "Shift") to start</span> }</div>
 
     <div style="margin-top:12px; border-top:1px solid rgba(255,255,255,0.1); padding-top:10px;">
-        <label class="toggle @(_p1MenuIndex == 4 ? "menu-focused" : "")"><input type="checkbox" @bind="_highQualityTextures" /> High Quality</label>
-        <label class="toggle @(_p1MenuIndex == 5 ? "menu-focused" : "")"><input type="checkbox" @bind="_drawGrid" /> Grid Overlay</label>
-        <label class="toggle @(_p1MenuIndex == 6 ? "menu-focused" : "")"><input type="checkbox" @bind="_showScoreboard" /> Scoreboard</label>
-        <label class="toggle @(_p1MenuIndex == 7 ? "menu-focused" : "")"><input type="checkbox" @bind="_splitScreen" /> Split Screen (2P)</label>
+        <label class="toggle @(_p1MenuIndex == 3 ? "menu-focused" : "")"><input type="checkbox" @bind="_highQualityTextures" /> High Quality</label>
+        <label class="toggle @(_p1MenuIndex == 4 ? "menu-focused" : "")"><input type="checkbox" @bind="_drawGrid" /> Grid Overlay</label>
+        <label class="toggle @(_p1MenuIndex == 5 ? "menu-focused" : "")"><input type="checkbox" @bind="_showScoreboard" /> Scoreboard</label>
+        <label class="toggle @(_p1MenuIndex == 6 ? "menu-focused" : "")"><input type="checkbox" @bind="_splitScreen" /> Split Screen (2P)</label>
     </div>
 </div>
 
@@ -84,15 +82,16 @@ else
 <div class="snake-sidebar @(_p2SidebarOpen ? "open" : "")">
     <h2 style="margin:0 0 12px; font-size:1.1rem; letter-spacing:1px;">PLAYER 2</h2>
 
-    <div class="field-group @(_p2MenuIndex == 0 ? "menu-focused" : "")">
+    <div class="field-group">
         <label>P2 Name</label>
-        <input id="p2NameInput" @bind="Player2Name" disabled="@(_p2Playing)" />
+        <input id="p2NameInput" class="@(_p2MenuIndex == 0 ? "menu-focused" : "")" @bind="Player2Name" disabled="@(_p2Playing)" />
     </div>
 
-    <div class="skin-section @(_p2MenuIndex == 1 ? "menu-focused" : "")" style="margin-top:6px; padding:4px;">
+    <div class="skin-section" style="margin-top:6px; padding:4px;">
         <label style="display:block;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.5px;opacity:0.6;margin-bottom:4px;">P2 Skin</label>
         <div class="skin-grid">
             <SkinGrid SelectedIndex="_p2SkinIndex"
+                      KeyboardFocusIndex="@(_p2MenuIndex == 1 ? _p2SkinIndex : -1)"
                       OnSkinSelected="((idx) => _p2SkinIndex = idx)"
                       IdPrefix="p2" />
         </div>
@@ -102,9 +101,7 @@ else
         </div>
     </div>
 
-    <div style="display:flex; gap:6px; margin-top:8px;">
-        <button class="btn-snake @(_p2MenuIndex == 2 ? "menu-focused" : "")" @onclick="ConnectP2">Connect P2</button>
-    </div>
+    <button class="btn-snake @(_p2MenuIndex == 2 ? "menu-focused" : "")" style="width:100%; margin-top:8px;" @onclick="ConnectP2">Connect P2</button>
 
     <div class="status-line">@_p2Status @if (_p2Status == "Disconnected" || _p2Status == "Game Over") { <span style="opacity:0.5; font-size:0.85em;">— Right Shift to start</span> }</div>
 </div>
@@ -202,6 +199,7 @@ else
     private readonly List<string> _p1MoveQueue = new();
     private readonly object _p1MoveLock = new();
     private string? _p1LastSentDir;
+    private int _p1MoveCooldown;
     private int? _centerTargetSnakeId;
     private volatile bool _p1Ready;
     private readonly SnakeRenderer.CameraState _p1Cam = new();
@@ -216,6 +214,7 @@ else
     private readonly List<string> _p2MoveQueue = new();
     private readonly object _p2MoveLock = new();
     private string? _p2LastSentDir;
+    private int _p2MoveCooldown;
     private volatile bool _p2Ready;
     private readonly SnakeRenderer.CameraState _p2Cam = new();
 
@@ -238,8 +237,9 @@ else
     private bool _p2SidebarOpen = true;
     private int _p1MenuIndex = 1;
     private int _p2MenuIndex = 1;
-    private const int P1MenuMax = 7;
+    private const int P1MenuMax = 6;
     private const int P2MenuMax = 2;
+    private const int SkinGridCols = 5;
     private bool _p1Playing => GameController.PlayerId.HasValue && !_showDeathScreen;
     private bool _p2Playing => _p2Game?.PlayerId.HasValue == true && !_p2ShowDeath;
     private bool _showScoreboard = true;
@@ -461,27 +461,33 @@ else
 
     private void NavigateMenu(ref int idx, int max, string dir, bool isP1)
     {
+        int skinCount = SnakeSkin.AllSkins.Length;
+        ref int skinIdx = ref (isP1 ? ref _p1SkinIndex : ref _p2SkinIndex);
+
         switch (dir)
         {
             case "up":
+                if (idx == 1)
+                {
+                    int row = skinIdx / SkinGridCols;
+                    if (row > 0) { skinIdx -= SkinGridCols; return; }
+                }
                 idx = idx <= 0 ? max : idx - 1;
                 break;
             case "down":
+                if (idx == 1)
+                {
+                    int row = skinIdx / SkinGridCols;
+                    int nextRow = row + 1;
+                    if (nextRow * SkinGridCols < skinCount) { skinIdx = Math.Min(skinIdx + SkinGridCols, skinCount - 1); return; }
+                }
                 idx = idx >= max ? 0 : idx + 1;
                 break;
             case "left":
-                if (idx == 1)
-                {
-                    if (isP1) _p1SkinIndex = (_p1SkinIndex - 1 + SnakeSkin.AllSkins.Length) % SnakeSkin.AllSkins.Length;
-                    else _p2SkinIndex = (_p2SkinIndex - 1 + SnakeSkin.AllSkins.Length) % SnakeSkin.AllSkins.Length;
-                }
+                if (idx == 1) skinIdx = (skinIdx - 1 + skinCount) % skinCount;
                 break;
             case "right":
-                if (idx == 1)
-                {
-                    if (isP1) _p1SkinIndex = (_p1SkinIndex + 1) % SnakeSkin.AllSkins.Length;
-                    else _p2SkinIndex = (_p2SkinIndex + 1) % SnakeSkin.AllSkins.Length;
-                }
+                if (idx == 1) skinIdx = (skinIdx + 1) % skinCount;
                 break;
         }
     }
@@ -496,14 +502,10 @@ else
                 if (_splitScreen) _p1SidebarOpen = false; else _sidebarOpen = false;
                 _ = InvokeAsync(() => Connect());
                 break;
-            case 3:
-                if (_splitScreen) _p1SidebarOpen = false; else _sidebarOpen = false;
-                _ = InvokeAsync(() => Reconnect());
-                break;
-            case 4: _highQualityTextures = !_highQualityTextures; break;
-            case 5: _drawGrid = !_drawGrid; break;
-            case 6: _showScoreboard = !_showScoreboard; break;
-            case 7: _splitScreen = !_splitScreen; break;
+            case 3: _highQualityTextures = !_highQualityTextures; break;
+            case 4: _drawGrid = !_drawGrid; break;
+            case 5: _showScoreboard = !_showScoreboard; break;
+            case 6: _splitScreen = !_splitScreen; break;
         }
     }
 
@@ -577,17 +579,28 @@ else
             var first = queue[0];
             var second = queue[1];
             bool firstIs180 = heading != null && _opposites.TryGetValue(first, out var o1) && o1 == heading;
-            bool secondIs180 = heading != null && _opposites.TryGetValue(second, out var o2) && o2 == heading;
+            bool pairCancels = _opposites.TryGetValue(first, out var fo) && fo == second;
 
-            if (firstIs180 && !secondIs180)
+            // Two inputs that undo each other (e.g. down+up) — discard both.
+            if (pairCancels)
             {
-                queue.RemoveAt(1);
+                queue.Clear();
+                return null;
+            }
+
+            // 180 key pressed first (e.g. left while heading right, then down).
+            // Reorder: send the valid intermediate turn now, re-queue the
+            // originally-180 move which becomes valid after the turn.
+            if (firstIs180)
+            {
+                queue.Clear();
+                queue.Add(first);
                 lastSentDir = second;
                 return second;
             }
 
+            // First move is valid — send it, leave second for next frame.
             queue.RemoveAt(0);
-            if (firstIs180) return null;
             lastSentDir = first;
             return first;
         }
@@ -595,18 +608,15 @@ else
 
     // ==================== Connection ====================
 
-    private async Task Connect(bool closeSidebar = true)
+    private async Task Connect()
     {
         _showDeathScreen = false;
         lock (_p1MoveLock) _p1MoveQueue.Clear();
         _p1LastSentDir = null;
         _p1Ready = false;
         _p1Cam.Reset();
-        if (closeSidebar)
-        {
-            if (_splitScreen) _p1SidebarOpen = false;
-            else _sidebarOpen = false;
-        }
+        if (_splitScreen) _p1SidebarOpen = false;
+        else _sidebarOpen = false;
         _renderer.ClearWallCache(GameController);
         GameController.Disconnect();
         try
@@ -623,8 +633,6 @@ else
             StateHasChanged();
         }
     }
-
-    private Task Reconnect() => Connect(closeSidebar: false);
 
     private async Task ConnectP2()
     {
@@ -671,8 +679,6 @@ else
         if (_p2Game != null) _ = _p2Game.SendMoveAsync("respawn");
         _ = InvokeAsync(StateHasChanged);
     }
-
-    private void Respawn() => RespawnP1();
 
     // ==================== Game State ====================
 
@@ -724,15 +730,24 @@ else
                 frameSw.Restart();
                 try
                 {
-                    // P1 move
-                    var move1 = DequeueMove(_p1MoveQueue, _p1MoveLock, GameController, ref _p1LastSentDir);
-                    if (move1 != null) _ = GameController.SendMoveAsync(move1);
+                    // P1 move — skip one frame after sending so the server
+                    // processes each turn before receiving the next one.
+                    if (_p1MoveCooldown > 0) _p1MoveCooldown--;
+                    else
+                    {
+                        var move1 = DequeueMove(_p1MoveQueue, _p1MoveLock, GameController, ref _p1LastSentDir);
+                        if (move1 != null) { _ = GameController.SendMoveAsync(move1); _p1MoveCooldown = 3; }
+                    }
 
                     // P2 move
                     if (_splitScreen && _p2Game != null)
                     {
-                        var move2 = DequeueMove(_p2MoveQueue, _p2MoveLock, _p2Game, ref _p2LastSentDir);
-                        if (move2 != null) _ = _p2Game.SendMoveAsync(move2);
+                        if (_p2MoveCooldown > 0) _p2MoveCooldown--;
+                        else
+                        {
+                            var move2 = DequeueMove(_p2MoveQueue, _p2MoveLock, _p2Game, ref _p2LastSentDir);
+                            if (move2 != null) { _ = _p2Game.SendMoveAsync(move2); _p2MoveCooldown = 3; }
+                        }
                     }
 
                     await DrawFrame();

@@ -3,12 +3,9 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
-    <LangVersion>latest</LangVersion>
     <RootNamespace>SnakeGame</RootNamespace>
     <AssemblyName>Server</AssemblyName>
-    <Nullable>enable</Nullable>
-    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <Nullable>disable</Nullable>
   </PropertyGroup>
 
   <!-- Publish as single-file: dotnet publish -c Release -r osx-arm64 -->

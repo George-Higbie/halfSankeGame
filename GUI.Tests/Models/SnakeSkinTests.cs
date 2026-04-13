@@ -1,5 +1,5 @@
 // <copyright file="SnakeSkinTests.cs" company="Snake PS9">
-// Copyright (c) 2026 Alex Waldmann & George Higbie. All rights reserved.
+// Copyright (c) 2026 Alex Waldmann, George Higbie, & CS 3500 Course Staff + Associates. All rights reserved.
 // </copyright>
 // Author: Alex Waldmann
 // Date: 2026-04-12
@@ -14,24 +14,60 @@ namespace GUI.Tests.Models;
 [TestClass]
 public class SnakeSkinTests
 {
+    private static SnakeSkin CreateCustomSkin() => new()
+    {
+        Name = "Custom",
+        BodyColor = "#ff0000",
+        BodyAccent = "#00ff00",
+        BodyAccent2 = "#0000ff",
+        Pattern = BodyPattern.Diamond,
+        BellyColor = "#aaa",
+        OutlineColor = "#bbb",
+        HeadColor = "#ccc",
+        EyeColor = "#ddd",
+        PupilColor = "#eee",
+        DeathColor = "#fff"
+    };
+
     // ==================== Defaults ====================
 
     [TestMethod]
-    public void SnakeSkin_DefaultConstructor_NoArgs_HasClassicValues()
+    public void SnakeSkin_DefaultConstructor_Name_DefaultsToClassic()
     {
         var skin = new SnakeSkin();
 
         Assert.AreEqual("Classic", skin.Name);
+    }
+
+    [TestMethod]
+    public void SnakeSkin_DefaultConstructor_PrimaryColors_DefaultToClassicPalette()
+    {
+        var skin = new SnakeSkin();
+
         Assert.AreEqual("#4caf50", skin.BodyColor);
-        Assert.IsNull(skin.BodyAccent);
-        Assert.IsNull(skin.BodyAccent2);
-        Assert.AreEqual(BodyPattern.Solid, skin.Pattern);
-        Assert.IsNull(skin.BellyColor);
-        Assert.IsNull(skin.OutlineColor);
         Assert.AreEqual("#4caf50", skin.HeadColor);
         Assert.AreEqual("white", skin.EyeColor);
         Assert.AreEqual("#111", skin.PupilColor);
         Assert.AreEqual("#4caf50", skin.DeathColor);
+    }
+
+    [TestMethod]
+    public void SnakeSkin_DefaultConstructor_OptionalAccents_DefaultToNull()
+    {
+        var skin = new SnakeSkin();
+
+        Assert.IsNull(skin.BodyAccent);
+        Assert.IsNull(skin.BodyAccent2);
+        Assert.IsNull(skin.BellyColor);
+        Assert.IsNull(skin.OutlineColor);
+    }
+
+    [TestMethod]
+    public void SnakeSkin_DefaultConstructor_Pattern_DefaultsToSolid()
+    {
+        var skin = new SnakeSkin();
+
+        Assert.AreEqual(BodyPattern.Solid, skin.Pattern);
     }
 
     // ==================== AllSkins Collection ====================
@@ -138,33 +174,41 @@ public class SnakeSkinTests
     // ==================== Init-Only Properties ====================
 
     [TestMethod]
-    public void SnakeSkin_InitProperties_ObjectInitializer_SetsAllFields()
+    public void SnakeSkin_InitProperties_ObjectInitializer_SetsIdentityAndPatternFields()
     {
-        var skin = new SnakeSkin
-        {
-            Name = "Custom",
-            BodyColor = "#ff0000",
-            BodyAccent = "#00ff00",
-            BodyAccent2 = "#0000ff",
-            Pattern = BodyPattern.Diamond,
-            BellyColor = "#aaa",
-            OutlineColor = "#bbb",
-            HeadColor = "#ccc",
-            EyeColor = "#ddd",
-            PupilColor = "#eee",
-            DeathColor = "#fff"
-        };
+        var skin = CreateCustomSkin();
 
         Assert.AreEqual("Custom", skin.Name);
         Assert.AreEqual("#ff0000", skin.BodyColor);
         Assert.AreEqual("#00ff00", skin.BodyAccent);
         Assert.AreEqual("#0000ff", skin.BodyAccent2);
         Assert.AreEqual(BodyPattern.Diamond, skin.Pattern);
+    }
+
+    [TestMethod]
+    public void SnakeSkin_InitProperties_ObjectInitializer_SetsSecondaryVisualFields()
+    {
+        var skin = CreateCustomSkin();
+
         Assert.AreEqual("#aaa", skin.BellyColor);
         Assert.AreEqual("#bbb", skin.OutlineColor);
+    }
+
+    [TestMethod]
+    public void SnakeSkin_InitProperties_ObjectInitializer_SetsHeadAndEyeFields()
+    {
+        var skin = CreateCustomSkin();
+
         Assert.AreEqual("#ccc", skin.HeadColor);
         Assert.AreEqual("#ddd", skin.EyeColor);
         Assert.AreEqual("#eee", skin.PupilColor);
+    }
+
+    [TestMethod]
+    public void SnakeSkin_InitProperties_ObjectInitializer_SetsDeathColor()
+    {
+        var skin = CreateCustomSkin();
+
         Assert.AreEqual("#fff", skin.DeathColor);
     }
 }

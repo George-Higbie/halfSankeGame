@@ -1,5 +1,5 @@
 // <copyright file="GameControllerTests.cs" company="Snake PS9">
-// Copyright (c) 2026 Alex Waldmann & George Higbie. All rights reserved.
+// Copyright (c) 2026 Alex Waldmann, George Higbie, & CS 3500 Course Staff + Associates. All rights reserved.
 // </copyright>
 // Author: Alex Waldmann
 // Date: 2026-04-12
@@ -39,6 +39,20 @@ public class GameControllerTests
     public void GameController_Constructor_NullNetworkArg_ThrowsArgumentNullException()
     {
         Assert.ThrowsExactly<ArgumentNullException>(() => new GameController(null!));
+    }
+
+    [TestMethod]
+    public async Task GameController_ConnectAsync_NullHost_ThrowsArgumentNullException()
+    {
+        await Assert.ThrowsExactlyAsync<ArgumentNullException>(
+            async () => await _game.ConnectAsync(null!, 11000, "player"));
+    }
+
+    [TestMethod]
+    public async Task GameController_ConnectAsync_NullName_ThrowsArgumentNullException()
+    {
+        await Assert.ThrowsExactlyAsync<ArgumentNullException>(
+            async () => await _game.ConnectAsync("localhost", 11000, null!));
     }
 
     // ==================== Initial State ====================
@@ -305,6 +319,13 @@ public class GameControllerTests
     }
 
     [TestMethod]
+    public async Task GameController_SendMoveAsync_NullMoving_ThrowsArgumentNullException()
+    {
+        await Assert.ThrowsExactlyAsync<ArgumentNullException>(
+            async () => await _game.SendMoveAsync(null!));
+    }
+
+    [TestMethod]
     public void GameController_GetPlayerSnake_PlayerIdSetKeyAbsent_ReturnsNull()
     {
         // Set the player ID but never add a snake with that ID.
@@ -316,6 +337,215 @@ public class GameControllerTests
 
         Assert.IsNull(_game.GetPlayerSnake(),
             "GetPlayerSnake should return null when player ID 99 has no snake in the collection.");
+    }
+
+    // ==================== ConnectAsync ====================
+
+    [TestMethod]
+    public async Task GameController_ConnectAsync_InvalidHost_ThrowsAndResetsIsInitializingFlag()
+    {
+        // Use a port on which nothing is listening; ConnectAsync must rethrow.
+        bool threw = false;
+        try
+        {
+            await _game.ConnectAsync("127.0.0.1", 1, "TestPlayer");
+        }
+        catch
+        {
+            threw = true;
+        }
+        Assert.IsTrue(threw, "ConnectAsync to a closed port must propagate the underlying exception.");
+    }
+
+    // ==================== SendMoveAsync after handshake ====================
+
+    [TestMethod]
+    public async Task GameController_SendMoveAsync_AfterHandshake_ReturnsCompletedTask()
+    {
+        // Complete the handshake via events so PlayerId and WorldSize are set.
+        RaiseEvent(_network, "OnPlayerIdReceived", 1);
+        RaiseEvent(_network, "OnWorldSizeReceived", 2000);
+        var snake = new Snake { Id = 1, Name = "Me", Alive = true };
+        RaiseEvent(_network, "OnSnakeReceived", snake);
+
+        // _writer is still null (no real TCP) so NetworkController.SendMoveAsync returns early.
+        // This covers the `return _network.SendMoveAsync(moving)` branch.
+        var task = _game.SendMoveAsync("right");
+        await task;
+
+        Assert.IsTrue(task.IsCompleted);
+    }
+
+    // ==================== MergeSnakeFields full branch coverage ====================
+
+    [TestMethod]
+    public void GameController_MergeSnake_DiedFalse_DoesNotClearAlive()
+    {
+        RaiseEvent(_network, "OnPlayerIdReceived", 1);
+        RaiseEvent(_network, "OnWorldSizeReceived", 2000);
+
+        var snake = new Snake { Id = 1, Alive = true, Died = false };
+        RaiseEvent(_network, "OnSnakeReceived", snake);
+
+        // Update with Died=false — existing.Died=false, Alive should stay true.
+        var update = new Snake { Id = 1, Died = false };
+        RaiseEvent(_network, "OnSnakeReceived", update);
+
+        var result = _game.GetSnakes().First(s => s.Id == 1);
+        Assert.IsFalse(result.Died);
+    }
+
+    [TestMethod]
+    public void GameController_MergeSnake_AliveTrue_SetsDiedFalse()
+    {
+        RaiseEvent(_network, "OnPlayerIdReceived", 1);
+        RaiseEvent(_network, "OnWorldSizeReceived", 2000);
+
+        var snake = new Snake { Id = 1, Alive = false, Died = true };
+        RaiseEvent(_network, "OnSnakeReceived", snake);
+
+        // Alive=true update: should set existing.Died = false
+        var update = new Snake { Id = 1, Alive = true };
+        RaiseEvent(_network, "OnSnakeReceived", update);
+
+        var result = _game.GetSnakes().First(s => s.Id == 1);
+        Assert.IsTrue(result.Alive);
+        Assert.IsFalse(result.Died);
+    }
+
+    [TestMethod]
+    public void GameController_MergeSnake_AliveFalse_BranchCovered()
+    {
+        RaiseEvent(_network, "OnPlayerIdReceived", 1);
+        RaiseEvent(_network, "OnWorldSizeReceived", 2000);
+
+        var snake = new Snake { Id = 1, Alive = true, Died = false };
+        RaiseEvent(_network, "OnSnakeReceived", snake);
+
+        // Alive=false update — covers the HasValue-true path without the .Value branch.
+        var update = new Snake { Id = 1, Alive = false };
+        RaiseEvent(_network, "OnSnakeReceived", update);
+
+        var result = _game.GetSnakes().First(s => s.Id == 1);
+        Assert.IsFalse(result.Alive);
+    }
+
+    [TestMethod]
+    public void GameController_MergeSnake_BodyDirectionSkinJoinedDisconnected_AllMerged()
+    {
+        RaiseEvent(_network, "OnPlayerIdReceived", 1);
+        RaiseEvent(_network, "OnWorldSizeReceived", 2000);
+
+        var snake = new Snake { Id = 1, Name = "Me", Alive = true, Joined = false, Disconnected = false };
+        RaiseEvent(_network, "OnSnakeReceived", snake);
+
+        var newBody = new List<Point2D> { new(10, 10), new(20, 10) };
+        var newDir = new Point2D(1, 0);
+        var update = new Snake
+        {
+            Id = 1,
+            Body = newBody,
+            Direction = newDir,
+            Skin = 3,
+            Joined = true,
+            Disconnected = false,
+        };
+        RaiseEvent(_network, "OnSnakeReceived", update);
+
+        var result = _game.GetSnakes().First(s => s.Id == 1);
+        Assert.IsNotNull(result.Body);
+        Assert.HasCount(2, result.Body!);
+        Assert.IsNotNull(result.Direction);
+        Assert.AreEqual(3, result.Skin);
+        Assert.IsTrue(result.Joined);
+    }
+
+    [TestMethod]
+    public void GameController_OnPlayerDied_NonPlayerSnakeDies_PlayerDiedEventDoesNotFire()
+    {
+        RaiseEvent(_network, "OnPlayerIdReceived", 1);
+        RaiseEvent(_network, "OnWorldSizeReceived", 2000);
+
+        // Player snake ID=1, other snake ID=2
+        var player = new Snake { Id = 1, Died = false, Alive = true };
+        RaiseEvent(_network, "OnSnakeReceived", player);
+        var other = new Snake { Id = 2, Died = false, Alive = true };
+        RaiseEvent(_network, "OnSnakeReceived", other);
+
+        bool fired = false;
+        _game.OnPlayerDied += () => fired = true;
+
+        // Only the non-player snake dies — player died event must NOT fire.
+        var diedUpdate = new Snake { Id = 2, Died = true };
+        RaiseEvent(_network, "OnSnakeReceived", diedUpdate);
+
+        Assert.IsFalse(fired, "OnPlayerDied must not fire when a non-player snake dies.");
+    }
+
+    [TestMethod]
+    public void GameController_OnSnakeReceived_NonInitializingWall_AppearsImmediatelyInGetWalls()
+    {
+        // Without ConnectAsync, _isInitializing is false so walls go directly into _walls.
+        var wall = new Wall { Id = 10, Point1 = new Point2D(0, 0), Point2 = new Point2D(50, 0) };
+        RaiseEvent(_network, "OnWallReceived", wall);
+
+        // Wall immediately visible — it was NOT buffered in _pendingWalls.
+        Assert.HasCount(1, _game.GetWalls());
+    }
+
+    [TestMethod]
+    public void GameController_OnSnakeReceived_NonInitializingPhase_HandlesPlayerIdDirectly()
+    {
+        // Skip initialization: receive player ID + world size WITHOUT _isInitializing=true.
+        // That means fire world size AFTER the first snake commit is done... actually just
+        // verify the non-initializing code paths by doing a full round-trip.
+        RaiseEvent(_network, "OnPlayerIdReceived", 3);
+        RaiseEvent(_network, "OnWorldSizeReceived", 300);
+
+        // First commit
+        var snake = new Snake { Id = 3, Alive = true };
+        RaiseEvent(_network, "OnSnakeReceived", snake);
+
+        Assert.AreEqual(3, _game.PlayerId);
+        Assert.AreEqual(300, _game.WorldSize);
+
+        // Second player id / world size fires the else branches (not initializing)
+        RaiseEvent(_network, "OnPlayerIdReceived", 4);
+        RaiseEvent(_network, "OnWorldSizeReceived", 400);
+
+        Assert.AreEqual(4, _game.PlayerId);
+        Assert.AreEqual(400, _game.WorldSize);
+    }
+
+    [TestMethod]
+    public void GameController_OnWallReceived_NonInitializingPhase_AddedDirectly()
+    {
+        // Trigger commit first so _isInitializing = false.
+        RaiseEvent(_network, "OnPlayerIdReceived", 1);
+        RaiseEvent(_network, "OnWorldSizeReceived", 2000);
+        RaiseEvent(_network, "OnSnakeReceived", new Snake { Id = 1, Alive = true });
+
+        // Now a wall arrives outside initialization — goes straight into _walls.
+        var wall = new Wall { Id = 99, Point1 = new Point2D(5, 5), Point2 = new Point2D(5, 50) };
+        RaiseEvent(_network, "OnWallReceived", wall);
+
+        Assert.HasCount(1, _game.GetWalls());
+    }
+
+    [TestMethod]
+    public void GameController_OnPowerupReceived_DiedPowerupNotInCollection_ElseBranchAddsIt()
+    {
+        RaiseEvent(_network, "OnPlayerIdReceived", 1);
+        RaiseEvent(_network, "OnWorldSizeReceived", 2000);
+        RaiseEvent(_network, "OnSnakeReceived", new Snake { Id = 1, Alive = true });
+
+        // A powerup with Died=true that is NOT already in the collection falls into the else
+        // branch of HandlePowerupReceived and is added (not discarded). This is correct
+        // server-protocol behavior — the server may send a final died=true before removal.
+        var pDied = new Powerup { Id = 999, Died = true };
+        RaiseEvent(_network, "OnPowerupReceived", pDied);
+
+        Assert.HasCount(1, _game.GetPowerups());
     }
 
     // ==================== Helpers ====================

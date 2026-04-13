@@ -47,7 +47,11 @@ CommandLineArgsForDesignTimeEvaluation=-langversion:latest -define:TRACE -doc:"o
 [sourceFiles]
 <NUGET>/microsoft.net.test.sdk/18.0.0/build/net8.0/Microsoft.NET.Test.Sdk.Program.cs
  @folderNames=..,..,.nuget,packages,microsoft.net.test.sdk,18.0.0,build,net8.0
-Controllers/GameControllerTests.cs
+Controllers/
+ GameControllerIntegrationTests.cs
+ GameControllerTests.cs
+ NetworkControllerIntegrationTests.cs
+ NetworkControllerTests.cs
 Models/
  Point2DTests.cs
  PowerupTests.cs

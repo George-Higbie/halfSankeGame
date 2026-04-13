@@ -1,5 +1,5 @@
 // <copyright file="SnakeTests.cs" company="Snake PS9">
-// Copyright (c) 2026 Alex Waldmann & George Higbie. All rights reserved.
+// Copyright (c) 2026 Alex Waldmann, George Higbie, & CS 3500 Course Staff + Associates. All rights reserved.
 // </copyright>
 // Author: Alex Waldmann
 // Date: 2026-04-12
@@ -82,6 +82,27 @@ public class SnakeTests
 
         Assert.HasCount(4, original.Body);
         Assert.HasCount(3, clone.Body!);
+    }
+
+    [TestMethod]
+    public void Snake_Clone_BodyPoints_MutatingOriginalPointDoesNotAffectClonePoint()
+    {
+        var original = new Snake
+        {
+            Body = new List<Point2D>
+            {
+                new(0, 0),
+                new(10, 0)
+            }
+        };
+
+        var clone = original.Clone();
+
+        original.Body[0].X = 99;
+
+        Assert.AreEqual(99, original.Body[0].X);
+        Assert.AreEqual(0, clone.Body![0].X);
+        Assert.AreNotSame(original.Body[0], clone.Body[0]);
     }
 
     [TestMethod]

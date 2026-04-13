@@ -15,7 +15,7 @@ primary
 lastDtbSucceeded
 
 [properties]
-CommandLineArgsForDesignTimeEvaluation=-langversion:latest -define:TRACE -doc:"obj\Debug/net10.0/Server.xml"
+CommandLineArgsForDesignTimeEvaluation=-langversion:14.0 -define:TRACE
 
 [commandLineArguments]
 /noconfig
@@ -26,10 +26,9 @@ CommandLineArgsForDesignTimeEvaluation=-langversion:latest -define:TRACE -doc:"o
 /nostdlib+
 /errorreport:prompt
 /warn:10
-/doc:obj/Debug/net10.0/Server.xml
 /define:TRACE;DEBUG;NET;NET10_0;NETCOREAPP;NET5_0_OR_GREATER;NET6_0_OR_GREATER;NET7_0_OR_GREATER;NET8_0_OR_GREATER;NET9_0_OR_GREATER;NET10_0_OR_GREATER;NETCOREAPP1_0_OR_GREATER;NETCOREAPP1_1_OR_GREATER;NETCOREAPP2_0_OR_GREATER;NETCOREAPP2_1_OR_GREATER;NETCOREAPP2_2_OR_GREATER;NETCOREAPP3_0_OR_GREATER;NETCOREAPP3_1_OR_GREATER
 /highentropyva+
-/nullable:enable
+/nullable:disable
 /features:"InterceptorsNamespaces=;Microsoft.Extensions.Validation.Generated"
 /debug+
 /debug:portable
@@ -38,10 +37,10 @@ CommandLineArgsForDesignTimeEvaluation=-langversion:latest -define:TRACE -doc:"o
 /out:obj/Debug/net10.0/Server.dll
 /refout:obj/Debug/net10.0/refint/Server.dll
 /target:exe
-/warnaserror+
+/warnaserror-
 /utf8output
 /deterministic+
-/langversion:latest
+/langversion:14.0
 /warnaserror+:NU1605,SYSLIB0011
 
 [sourceFiles]

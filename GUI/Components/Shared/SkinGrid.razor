@@ -6,7 +6,7 @@
     {
         var idx = i;
         var skin = SnakeSkin.AllSkins[idx];
-        <button class="skin-tile @(idx == SelectedIndex ? "skin-active" : "")"
+        <button class="skin-tile @(idx == SelectedIndex ? "skin-active" : "") @(idx == KeyboardFocusIndex ? "skin-kb-focus" : "")"
                 @onclick="(() => OnSkinSelected.InvokeAsync(idx))" title="@skin.Name">
             <svg width="18" height="18" viewBox="0 0 18 18">
                 <defs><clipPath id="@(IdPrefix)c@(idx)"><circle cx="9" cy="9" r="8"/></clipPath></defs>
@@ -38,6 +38,9 @@
 @code {
     /// <summary>Index of the currently selected skin.</summary>
     [Parameter] public int SelectedIndex { get; set; }
+
+    /// <summary>Index of the tile highlighted by keyboard navigation. -1 = none.</summary>
+    [Parameter] public int KeyboardFocusIndex { get; set; } = -1;
 
     /// <summary>Callback invoked when the user clicks a skin tile.</summary>
     [Parameter] public EventCallback<int> OnSkinSelected { get; set; }
