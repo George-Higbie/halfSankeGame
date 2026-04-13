@@ -25,14 +25,31 @@ public class SnakeRenderer
     /// <summary>Width of the snake body stroke in pixels.</summary>
     public const int SnakeWidth = 10;
 
+    /// <summary>Half the wall segment width used for bounding-box calculation.</summary>
     private const int WallHalfWidth = 25;
+
+    /// <summary>Full thickness of a wall segment in pixels.</summary>
     private const int WallThickness = 50;
+
+    /// <summary>Distance between explosion particle sample points along the body.</summary>
     private const double BitDistance = 20.0;
+
+    /// <summary>Seconds between successive particle spawns along the body during a death explosion.</summary>
     private const double ExplosionDelay = 0.05;
+
+    /// <summary>How long each explosion particle remains visible (seconds).</summary>
     private const double ParticleLifespan = 0.6;
+
+    /// <summary>Distance between background grid lines in pixels.</summary>
     private const int GridSpacing = 50;
+
+    /// <summary>Side length of a single wall brick cell in pixels.</summary>
     private const int BrickSize = 25;
+
+    /// <summary>Duration of the powerup pop-in animation (seconds).</summary>
     private const double PowerupPopDurationSeconds = 0.11;
+
+    /// <summary>Bounce amplitude of the powerup pop-in easing curve.</summary>
     private const double PowerupPopBounceAmplitude = 0.30;
 
     // ==================== Inner Types ====================
@@ -71,7 +88,10 @@ public class SnakeRenderer
 
     // ==================== Wall Cache ====================
 
+    /// <summary>Per-controller cache of occupied wall cell coordinates for brick rendering.</summary>
     private readonly Dictionary<GameController, HashSet<(int cx, int cy)>> _wallCaches = new();
+
+    /// <summary>Tracks when each powerup was first seen (for pop-in animation timing).</summary>
     private readonly Dictionary<int, DateTime> _powerupFirstSeenAt = new();
 
     /// <summary>Clears the cached wall cell grid for the given controller.</summary>
@@ -82,6 +102,7 @@ public class SnakeRenderer
     /// <summary>Static wavy path for the skin preview canvases.</summary>
     private static readonly IReadOnlyList<Point2D> PreviewPath = BuildPreviewPath();
 
+    /// <summary>Builds the static sine-wave body path used for skin preview canvases.</summary>
     private static List<Point2D> BuildPreviewPath()
     {
         var pts = new List<Point2D>();
@@ -179,6 +200,7 @@ public class SnakeRenderer
 
     // ==================== Grid ====================
 
+    /// <summary>Draws the faint background grid lines across the world.</summary>
     private static async Task DrawGrid(Canvas2DContext ctx, int worldSize)
     {
         await ctx.SetStrokeStyleAsync("rgba(0,0,0,0.05)");
@@ -291,6 +313,7 @@ public class SnakeRenderer
 
     // ==================== Walls ====================
 
+    /// <summary>Draws all wall segments, using high-quality brick rendering when enabled.</summary>
     private async Task DrawWalls(Canvas2DContext ctx, GameController gc, bool highQuality)
     {
         var walls = gc.GetWalls();
@@ -445,6 +468,7 @@ public class SnakeRenderer
         }
     }
 
+    /// <summary>Computes the axis-aligned bounding rectangle for a wall segment.</summary>
     private static (double x, double y, double w, double h) WallRect(Wall wall)
     {
         var x = (double)Math.Min(wall.Point1!.X, wall.Point2!.X) - WallHalfWidth;
@@ -458,6 +482,7 @@ public class SnakeRenderer
 
     // ==================== Powerups ====================
 
+    /// <summary>Draws all active powerups with optional pulse and pop-in animation.</summary>
     private async Task DrawPowerups(Canvas2DContext ctx, GameController gc, bool highQuality)
     {
         var now = DateTime.UtcNow;
@@ -500,6 +525,7 @@ public class SnakeRenderer
         }
     }
 
+    /// <summary>Computes the pop-in scale factor for a newly spawned powerup.</summary>
     private static double ComputePowerupPopScale(double ageSeconds)
     {
         if (ageSeconds <= 0)
@@ -515,6 +541,7 @@ public class SnakeRenderer
 
     // ==================== Snakes ====================
 
+    /// <summary>Draws all living snakes and creates death animations for newly dead ones.</summary>
     private async Task DrawSnakes(Canvas2DContext ctx, IReadOnlyList<Snake> snakes, int? playerId, Dictionary<int, DeathAnim> deathAnims, bool showDeath, SnakeSkin playerSkin)
     {
         foreach (var s in snakes)
@@ -554,6 +581,7 @@ public class SnakeRenderer
         }
     }
 
+    /// <summary>Draws the floating name/score pill above a snake's head.</summary>
     private static async Task DrawNameplate(Canvas2DContext ctx, Snake s, IReadOnlyList<Point2D> body)
     {
         var scoreTxt = (s.Score ?? 0).ToString();
@@ -687,6 +715,7 @@ public class SnakeRenderer
         await DrawHead(ctx, body, skin);
     }
 
+    /// <summary>Draws the snake head circle with eyes and pupils, rotated to face the movement direction.</summary>
     private static async Task DrawHead(Canvas2DContext ctx, IReadOnlyList<Point2D> body, SnakeSkin skin)
     {
         var head = body[^1];
@@ -729,6 +758,7 @@ public class SnakeRenderer
 
     // ==================== Body Patterns ====================
 
+    /// <summary>Dispatches body pattern rendering based on the skin's pattern type.</summary>
     private async Task DrawBodyPattern(Canvas2DContext ctx, IReadOnlyList<Point2D> body, SnakeSkin skin)
     {
         if (skin.BodyAccent == null || skin.Pattern == BodyPattern.Solid) return;
@@ -743,6 +773,7 @@ public class SnakeRenderer
         await DrawPerpendicularPattern(ctx, body, skin);
     }
 
+    /// <summary>Draws alternating color stripe bands along the snake body using dash patterns.</summary>
     private static async Task DrawStripePattern(Canvas2DContext ctx, IReadOnlyList<Point2D> body, SnakeSkin skin)
     {
         float band = 10f;
@@ -789,6 +820,7 @@ public class SnakeRenderer
         await ctx.RestoreAsync();
     }
 
+    /// <summary>Draws checker, diamond, or wave marks perpendicular to the body path.</summary>
     private static async Task DrawPerpendicularPattern(Canvas2DContext ctx, IReadOnlyList<Point2D> body, SnakeSkin skin)
     {
         int segCount = body.Count - 1;
@@ -882,6 +914,7 @@ public class SnakeRenderer
         }
     }
 
+    /// <summary>Draws a single pattern mark (checker dot, diamond, or wave dot) at the given position.</summary>
     private static async Task DrawPatternMark(Canvas2DContext ctx, SnakeSkin skin, double px, double py, double nx, double ny, double dx, double dy, int idx)
     {
         double halfW = SnakeWidth / 2.0;

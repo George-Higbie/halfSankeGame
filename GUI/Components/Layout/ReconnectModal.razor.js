@@ -1,3 +1,11 @@
+/**
+ * @file ReconnectModal.razor.js
+ * Handles the Blazor reconnect modal UI (retry / resume buttons).
+ *
+ * @authors Alex Waldmann, George Higbie
+ * @copyright 2026 Alex Waldmann & George Higbie. All rights reserved.
+ */
+
 // Set up event handlers
 const reconnectModal = document.getElementById("components-reconnect-modal");
 reconnectModal.addEventListener("components-reconnect-state-changed", handleReconnectStateChanged);

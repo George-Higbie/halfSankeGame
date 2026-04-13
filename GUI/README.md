@@ -1,27 +1,44 @@
 # Snake GUI (PS9)
 
-This is the Blazor GUI client for the Snake assignment (PS9). It connects to the provided server which speaks a line-delimited JSON protocol.
+Blazor Server client for the Snake game assignment (PS9). Connects to the server using a line-delimited JSON protocol over TCP.
 
-Quick run (macOS):
+**Authors:** Alex Waldmann, George Higbie  
+**Date:** 2026-04-12
+
+## Quick Start (preferred)
+
+From the repo root, use the provided start scripts — they build the server and launch everything:
 
 ```bash
-# make server and AI clients executable (one-time)
-chmod +x /path/to/SnakeApps-osx-arm64/Server-osx-arm64/Server
-chmod +x /path/to/SnakeApps-osx-arm64/AIClient-osx-arm64/AIClient
+# macOS / Linux
+chmod +x start.sh
+./start.sh
 
-# start the server
-cd /path/to/SnakeApps-osx-arm64/Server-osx-arm64
-./Server
+# Windows
+start.bat
+```
 
-# start the GUI
-cd /path/to/Snake_Handout/GUI
-dotnet run
+Then open your browser to `http://localhost:5000/snake`.
 
-# open browser at the URL printed by dotnet (e.g. http://localhost:5000)
+## Manual Start
+
+```bash
+# Terminal 1 — Server
+cd Server && dotnet build -c Debug -o bin/run && cd bin/run && dotnet Server.dll
+
+# Terminal 2 — GUI
+cd GUI && dotnet run
 open http://localhost:5000/snake
 ```
 
-Controls: WASD or arrow keys. Use the connection box (top-left) to enter host, port, and player name.
+## Controls
 
-Notes: This project was adapted to build with .NET 8.0 on the local machine. The original handout targeted .NET 10.0.
+- **WASD** or **Arrow keys** to move.
+- Use the sidebar connection box to enter host, port, and player name.
+- Supports 1P and 2P split-screen modes.
+
+## Partners
+
+- P1: Alex Waldmann
+- P2: George Higbie
 

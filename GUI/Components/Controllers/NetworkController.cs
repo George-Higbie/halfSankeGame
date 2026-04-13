@@ -101,7 +101,11 @@ namespace GUI.Components.Controllers
             {
                 await _writer.WriteLineAsync(cmd);
             }
-            catch (Exception)
+            catch (IOException)
+            {
+                OnDisconnected?.Invoke();
+            }
+            catch (ObjectDisposedException)
             {
                 OnDisconnected?.Invoke();
             }
@@ -226,9 +230,17 @@ namespace GUI.Components.Controllers
                     }
                 }
             }
-            catch (Exception)
+            catch (IOException)
             {
-                // read loop ended — connection lost, stream closed, or cancellation
+                // connection lost or stream closed
+            }
+            catch (SocketException)
+            {
+                // network-level failure
+            }
+            catch (OperationCanceledException)
+            {
+                // cancellation token fired
             }
             finally
             {
@@ -256,7 +268,13 @@ namespace GUI.Components.Controllers
                     await ConnectAsync(_host!, _port, _playerName!, ct: ct);
                     return;
                 }
-                catch
+                catch (IOException)
+                {
+                    attempt++;
+                    var delay = Math.Min(8000, 500 * (1 << Math.Min(attempt, 6)));
+                    await Task.Delay(delay, ct);
+                }
+                catch (SocketException)
                 {
                     attempt++;
                     var delay = Math.Min(8000, 500 * (1 << Math.Min(attempt, 6)));
