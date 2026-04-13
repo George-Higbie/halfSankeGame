@@ -64,8 +64,11 @@ namespace GUI.Components.Controllers
         public NetworkController() { }
 
         /// <summary>Connects to the server, sends the player name and skin index, and starts the read loop.</summary>
+        /// <exception cref="ArgumentNullException">Thrown when <paramref name="host"/> or <paramref name="playerName"/> is null.</exception>
         public async Task ConnectAsync(string host, int port, string playerName, int skinIndex = 0, CancellationToken ct = default)
         {
+            ArgumentNullException.ThrowIfNull(host);
+            ArgumentNullException.ThrowIfNull(playerName);
             Disconnect();
 
             PlayerId = null;
@@ -88,8 +91,10 @@ namespace GUI.Components.Controllers
         }
 
         /// <summary>Sends a JSON movement command to the server.</summary>
+        /// <exception cref="ArgumentNullException">Thrown when <paramref name="moving"/> is null.</exception>
         public async Task SendMoveAsync(string moving)
         {
+            ArgumentNullException.ThrowIfNull(moving);
             if (_writer == null) return;
             var cmd = JsonSerializer.Serialize(new { moving = moving });
             try

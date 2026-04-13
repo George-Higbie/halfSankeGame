@@ -63,7 +63,7 @@ namespace GUI.Components.Models
         {
             Id = Id,
             Name = Name,
-            Body = Body?.ToList(),
+            Body = Body?.Select(p => new Point2D(p.X, p.Y)).ToList(),
             Direction = Direction != null ? new Point2D(Direction.X, Direction.Y) : null,
             Score = Score,
             Died = Died,

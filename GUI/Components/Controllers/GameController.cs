@@ -80,8 +80,11 @@ namespace GUI.Components.Controllers
         }
 
         /// <summary>Connects to the game server and enters the initialization phase.</summary>
+        /// <exception cref="ArgumentNullException">Thrown when <paramref name="host"/> or <paramref name="name"/> is null.</exception>
         public async Task ConnectAsync(string host, int port, string name, int skinIndex = 0)
         {
+            ArgumentNullException.ThrowIfNull(host);
+            ArgumentNullException.ThrowIfNull(name);
             _isInitializing = true;
             _pendingPlayerId = null;
             _pendingWorldSize = null;
@@ -112,8 +115,10 @@ namespace GUI.Components.Controllers
         }
 
         /// <summary>Sends a movement command to the server if the handshake is complete.</summary>
+        /// <exception cref="ArgumentNullException">Thrown when <paramref name="moving"/> is null.</exception>
         public Task SendMoveAsync(string moving)
         {
+            ArgumentNullException.ThrowIfNull(moving);
             if (!PlayerId.HasValue || !WorldSize.HasValue) return Task.CompletedTask;
             return _network.SendMoveAsync(moving);
         }
