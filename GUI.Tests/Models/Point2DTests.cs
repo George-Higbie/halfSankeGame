@@ -17,7 +17,7 @@ public class Point2DTests
     // ==================== Constructor ====================
 
     [TestMethod]
-    public void DefaultConstructor_SetsXAndYToZero()
+    public void Point2D_DefaultConstructor_NoArgs_XAndYAreZero()
     {
         var p = new Point2D();
 
@@ -26,7 +26,7 @@ public class Point2DTests
     }
 
     [TestMethod]
-    public void ParameterizedConstructor_SetsXAndY()
+    public void Point2D_Constructor_PositiveArgs_SetsXAndY()
     {
         var p = new Point2D(42, -7);
 
@@ -35,7 +35,7 @@ public class Point2DTests
     }
 
     [TestMethod]
-    public void ParameterizedConstructor_NegativeValues_PreservesSign()
+    public void Point2D_Constructor_NegativeArgs_PreservesSign()
     {
         var p = new Point2D(-100, -200);
 
@@ -44,7 +44,7 @@ public class Point2DTests
     }
 
     [TestMethod]
-    public void ParameterizedConstructor_ZeroValues_SetsToZero()
+    public void Point2D_Constructor_ZeroArgs_SetsToZero()
     {
         var p = new Point2D(0, 0);
 
@@ -55,7 +55,7 @@ public class Point2DTests
     // ==================== Mutability ====================
 
     [TestMethod]
-    public void SetX_UpdatesValue()
+    public void Point2D_SetX_NewValue_UpdatesXPreservesY()
     {
         var p = new Point2D(1, 2);
 
@@ -66,7 +66,7 @@ public class Point2DTests
     }
 
     [TestMethod]
-    public void SetY_UpdatesValue()
+    public void Point2D_SetY_NewValue_UpdatesYPreservesX()
     {
         var p = new Point2D(1, 2);
 
@@ -79,7 +79,7 @@ public class Point2DTests
     // ==================== Boundary ====================
 
     [TestMethod]
-    public void LargeValues_DoNotOverflow()
+    public void Point2D_Constructor_IntBoundaryValues_DoNotOverflow()
     {
         var p = new Point2D(int.MaxValue, int.MinValue);
 

@@ -17,7 +17,7 @@ public class SnakeSkinTests
     // ==================== Defaults ====================
 
     [TestMethod]
-    public void DefaultSkin_HasClassicValues()
+    public void SnakeSkin_DefaultConstructor_NoArgs_HasClassicValues()
     {
         var skin = new SnakeSkin();
 
@@ -37,20 +37,20 @@ public class SnakeSkinTests
     // ==================== AllSkins Collection ====================
 
     [TestMethod]
-    public void AllSkins_IsNotNull()
+    public void SnakeSkin_AllSkins_StaticProperty_IsNotNull()
     {
         Assert.IsNotNull(SnakeSkin.AllSkins);
     }
 
     [TestMethod]
-    public void AllSkins_ContainsMultipleSkins()
+    public void SnakeSkin_AllSkins_StaticProperty_ContainsMultipleSkins()
     {
-        Assert.IsTrue(SnakeSkin.AllSkins.Length > 1,
+        Assert.IsGreaterThan(1, SnakeSkin.AllSkins.Length,
             "Expected more than one skin in AllSkins.");
     }
 
     [TestMethod]
-    public void AllSkins_AllHaveNonEmptyNames()
+    public void SnakeSkin_AllSkins_EachSkin_HasNonEmptyName()
     {
         foreach (var skin in SnakeSkin.AllSkins)
         {
@@ -60,7 +60,7 @@ public class SnakeSkinTests
     }
 
     [TestMethod]
-    public void AllSkins_AllHaveNonEmptyBodyColor()
+    public void SnakeSkin_AllSkins_EachSkin_HasNonEmptyBodyColor()
     {
         foreach (var skin in SnakeSkin.AllSkins)
         {
@@ -70,7 +70,7 @@ public class SnakeSkinTests
     }
 
     [TestMethod]
-    public void AllSkins_AllHaveNonEmptyHeadColor()
+    public void SnakeSkin_AllSkins_EachSkin_HasNonEmptyHeadColor()
     {
         foreach (var skin in SnakeSkin.AllSkins)
         {
@@ -80,7 +80,7 @@ public class SnakeSkinTests
     }
 
     [TestMethod]
-    public void AllSkins_AllHaveNonEmptyDeathColor()
+    public void SnakeSkin_AllSkins_EachSkin_HasNonEmptyDeathColor()
     {
         foreach (var skin in SnakeSkin.AllSkins)
         {
@@ -90,17 +90,17 @@ public class SnakeSkinTests
     }
 
     [TestMethod]
-    public void AllSkins_NamesAreUnique()
+    public void SnakeSkin_AllSkins_AllSkinNames_AreUnique()
     {
         var names = SnakeSkin.AllSkins.Select(s => s.Name).ToList();
         var distinct = names.Distinct().ToList();
 
-        Assert.AreEqual(names.Count, distinct.Count,
+        Assert.HasCount(names.Count, distinct,
             "Skin names must be unique.");
     }
 
     [TestMethod]
-    public void AllSkins_StripedSkinsHaveAccent()
+    public void SnakeSkin_AllSkins_StripedSkins_HaveBodyAccent()
     {
         var striped = SnakeSkin.AllSkins.Where(s => s.Pattern == BodyPattern.Stripe);
 
@@ -112,7 +112,7 @@ public class SnakeSkinTests
     }
 
     [TestMethod]
-    public void AllSkins_NonSolidPatternsHaveAccent()
+    public void SnakeSkin_AllSkins_NonSolidPatterns_HaveBodyAccent()
     {
         var patterned = SnakeSkin.AllSkins.Where(s => s.Pattern != BodyPattern.Solid);
 
@@ -126,7 +126,7 @@ public class SnakeSkinTests
     // ==================== BodyPattern Enum ====================
 
     [TestMethod]
-    public void BodyPattern_HasExpectedValues()
+    public void BodyPattern_EnumValues_AllVariants_HaveCorrectIntegerValues()
     {
         Assert.AreEqual(0, (int)BodyPattern.Solid);
         Assert.AreEqual(1, (int)BodyPattern.Stripe);
@@ -138,7 +138,7 @@ public class SnakeSkinTests
     // ==================== Init-Only Properties ====================
 
     [TestMethod]
-    public void InitProperties_CanBeSetViaObjectInitializer()
+    public void SnakeSkin_InitProperties_ObjectInitializer_SetsAllFields()
     {
         var skin = new SnakeSkin
         {

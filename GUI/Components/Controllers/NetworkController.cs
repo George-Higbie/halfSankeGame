@@ -66,6 +66,8 @@ namespace GUI.Components.Controllers
         /// <summary>Connects to the server, sends the player name and skin index, and starts the read loop.</summary>
         public async Task ConnectAsync(string host, int port, string playerName, int skinIndex = 0, CancellationToken ct = default)
         {
+            ArgumentNullException.ThrowIfNull(host);
+            ArgumentNullException.ThrowIfNull(playerName);
             Disconnect();
 
             PlayerId = null;
@@ -90,6 +92,7 @@ namespace GUI.Components.Controllers
         /// <summary>Sends a JSON movement command to the server.</summary>
         public async Task SendMoveAsync(string moving)
         {
+            ArgumentNullException.ThrowIfNull(moving);
             if (_writer == null) return;
             var cmd = JsonSerializer.Serialize(new { moving = moving });
             try

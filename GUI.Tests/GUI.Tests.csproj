@@ -5,6 +5,11 @@
     <LangVersion>latest</LangVersion>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- CS1591: test methods are not public APIs; suppress missing-XML-comment warnings -->
+    <!-- MSTEST0032: enum-constant comparisons are always-true by design; suppress for value-stability tests -->
+    <NoWarn>CS1591;MSTEST0032</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

@@ -1,3 +1,9 @@
+// <copyright file="Program.cs" company="Snake PS9">
+// Copyright (c) 2026 Alex Waldmann & George Higbie. All rights reserved.
+// </copyright>
+// Authors: Alex Waldmann, George Higbie
+// Date: 2026-04-12
+
 using GUI.Components;
 
 var builder = WebApplication.CreateBuilder(args);

@@ -15,29 +15,18 @@ primary
 lastDtbSucceeded
 
 [properties]
-AssemblyName=GUI.Tests
-CommandLineArgsForDesignTimeEvaluation=-langversion:latest -define:TRACE
-CompilerGeneratedFilesOutputPath=
-MaxSupportedLangVersion=14.0
-ProjectAssetsFile=<PATH>obj/project.assets.json
-RootNamespace=GUI.Tests
-RunAnalyzers=
-RunAnalyzersDuringLiveAnalysis=
-SolutionPath=<PATH>../Snake.sln
-TargetFrameworkIdentifier=.NETCoreApp
-TargetPath=<PATH>bin/Debug/net10.0/GUI.Tests.dll
-TargetRefPath=<PATH>obj/Debug/net10.0/ref/GUI.Tests.dll
-TemporaryDependencyNodeTargetIdentifier=net10.0
+CommandLineArgsForDesignTimeEvaluation=-langversion:latest -define:TRACE -doc:"obj\Debug/net10.0/GUI.Tests.xml"
 
 [commandLineArguments]
 /noconfig
 /unsafe-
 /checked-
-/nowarn:1701,1702,1701,1702
+/nowarn:CS1591,MSTEST0032,1701,1702
 /fullpaths
 /nostdlib+
 /errorreport:prompt
 /warn:10
+/doc:obj/Debug/net10.0/GUI.Tests.xml
 /define:TRACE;DEBUG;NET;NET10_0;NETCOREAPP;NET5_0_OR_GREATER;NET6_0_OR_GREATER;NET7_0_OR_GREATER;NET8_0_OR_GREATER;NET9_0_OR_GREATER;NET10_0_OR_GREATER;NETCOREAPP1_0_OR_GREATER;NETCOREAPP1_1_OR_GREATER;NETCOREAPP2_0_OR_GREATER;NETCOREAPP2_1_OR_GREATER;NETCOREAPP2_2_OR_GREATER;NETCOREAPP3_0_OR_GREATER;NETCOREAPP3_1_OR_GREATER
 /highentropyva+
 /nullable:enable
@@ -49,7 +38,7 @@ TemporaryDependencyNodeTargetIdentifier=net10.0
 /out:obj/Debug/net10.0/GUI.Tests.dll
 /refout:obj/Debug/net10.0/refint/GUI.Tests.dll
 /target:exe
-/warnaserror-
+/warnaserror+
 /utf8output
 /deterministic+
 /langversion:latest

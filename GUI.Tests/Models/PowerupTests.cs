@@ -15,7 +15,7 @@ namespace GUI.Tests.Models;
 public class PowerupTests
 {
     [TestMethod]
-    public void DefaultPowerup_HasZeroIdAndNullLocation()
+    public void Powerup_DefaultConstructor_NoArgs_HasZeroIdAndNullLocation()
     {
         var p = new Powerup();
 
@@ -25,7 +25,7 @@ public class PowerupTests
     }
 
     [TestMethod]
-    public void SetProperties_ReflectsValues()
+    public void Powerup_Properties_SetAllValues_ReflectsCorrectly()
     {
         var p = new Powerup
         {
@@ -41,7 +41,7 @@ public class PowerupTests
     }
 
     [TestMethod]
-    public void DiedDefaultsFalse_CanBeSetTrue()
+    public void Powerup_Died_DefaultFalse_CanBeSetTrue()
     {
         var p = new Powerup();
 
@@ -50,5 +50,12 @@ public class PowerupTests
         p.Died = true;
 
         Assert.IsTrue(p.Died);
+    }
+    [TestMethod]
+    public void Powerup_Id_LargeValue_RoundtripsWithoutLoss()
+    {
+        var p = new Powerup { Id = int.MaxValue };
+
+        Assert.AreEqual(int.MaxValue, p.Id);
     }
 }

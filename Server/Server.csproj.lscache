@@ -15,19 +15,7 @@ primary
 lastDtbSucceeded
 
 [properties]
-AssemblyName=Server
-CommandLineArgsForDesignTimeEvaluation=-langversion:14.0 -define:TRACE
-CompilerGeneratedFilesOutputPath=
-MaxSupportedLangVersion=14.0
-ProjectAssetsFile=<PATH>obj/project.assets.json
-RootNamespace=SnakeGame
-RunAnalyzers=
-RunAnalyzersDuringLiveAnalysis=
-SolutionPath=<PATH>../Snake.sln
-TargetFrameworkIdentifier=.NETCoreApp
-TargetPath=<PATH>bin/Debug/net10.0/Server.dll
-TargetRefPath=<PATH>obj/Debug/net10.0/ref/Server.dll
-TemporaryDependencyNodeTargetIdentifier=net10.0
+CommandLineArgsForDesignTimeEvaluation=-langversion:latest -define:TRACE -doc:"obj\Debug/net10.0/Server.xml"
 
 [commandLineArguments]
 /noconfig
@@ -38,9 +26,10 @@ TemporaryDependencyNodeTargetIdentifier=net10.0
 /nostdlib+
 /errorreport:prompt
 /warn:10
+/doc:obj/Debug/net10.0/Server.xml
 /define:TRACE;DEBUG;NET;NET10_0;NETCOREAPP;NET5_0_OR_GREATER;NET6_0_OR_GREATER;NET7_0_OR_GREATER;NET8_0_OR_GREATER;NET9_0_OR_GREATER;NET10_0_OR_GREATER;NETCOREAPP1_0_OR_GREATER;NETCOREAPP1_1_OR_GREATER;NETCOREAPP2_0_OR_GREATER;NETCOREAPP2_1_OR_GREATER;NETCOREAPP2_2_OR_GREATER;NETCOREAPP3_0_OR_GREATER;NETCOREAPP3_1_OR_GREATER
 /highentropyva+
-/nullable:disable
+/nullable:enable
 /features:"InterceptorsNamespaces=;Microsoft.Extensions.Validation.Generated"
 /debug+
 /debug:portable
@@ -49,10 +38,10 @@ TemporaryDependencyNodeTargetIdentifier=net10.0
 /out:obj/Debug/net10.0/Server.dll
 /refout:obj/Debug/net10.0/refint/Server.dll
 /target:exe
-/warnaserror-
+/warnaserror+
 /utf8output
 /deterministic+
-/langversion:14.0
+/langversion:latest
 /warnaserror+:NU1605,SYSLIB0011
 
 [sourceFiles]

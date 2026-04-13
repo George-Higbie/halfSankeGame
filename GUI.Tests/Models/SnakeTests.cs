@@ -17,7 +17,7 @@ public class SnakeTests
     // ==================== Default State ====================
 
     [TestMethod]
-    public void DefaultSnake_PropertiesAreDefault()
+    public void Snake_DefaultConstructor_NoArgs_AllPropertiesAreDefault()
     {
         var s = new Snake();
 
@@ -36,7 +36,7 @@ public class SnakeTests
     // ==================== Clone ====================
 
     [TestMethod]
-    public void Clone_CopiesAllScalarFields()
+    public void Snake_Clone_AllScalarFields_DeepCopiesValues()
     {
         var original = new Snake
         {
@@ -55,15 +55,15 @@ public class SnakeTests
         Assert.AreEqual(5, clone.Id);
         Assert.AreEqual("TestSnake", clone.Name);
         Assert.AreEqual(42, clone.Score);
-        Assert.AreEqual(false, clone.Died);
-        Assert.AreEqual(true, clone.Alive);
-        Assert.AreEqual(false, clone.Disconnected);
-        Assert.AreEqual(true, clone.Joined);
+        Assert.IsFalse(clone.Died);
+        Assert.IsTrue(clone.Alive);
+        Assert.IsFalse(clone.Disconnected);
+        Assert.IsTrue(clone.Joined);
         Assert.AreEqual(3, clone.Skin);
     }
 
     [TestMethod]
-    public void Clone_DeepCopiesBody_MutatingOriginalDoesNotAffectClone()
+    public void Snake_Clone_BodyList_MutatingOriginalDoesNotAffectClone()
     {
         var original = new Snake
         {
@@ -80,12 +80,12 @@ public class SnakeTests
         // Mutate original body
         original.Body.Add(new Point2D(30, 0));
 
-        Assert.AreEqual(4, original.Body.Count);
-        Assert.AreEqual(3, clone.Body!.Count);
+        Assert.HasCount(4, original.Body);
+        Assert.HasCount(3, clone.Body!);
     }
 
     [TestMethod]
-    public void Clone_DeepCopiesDirection_MutatingOriginalDoesNotAffectClone()
+    public void Snake_Clone_Direction_MutatingOriginalDoesNotAffectClone()
     {
         var original = new Snake
         {
@@ -102,7 +102,7 @@ public class SnakeTests
     }
 
     [TestMethod]
-    public void Clone_NullBody_ReturnsNullBody()
+    public void Snake_Clone_NullBody_CloneBodyIsNull()
     {
         var original = new Snake { Body = null };
 
@@ -112,7 +112,7 @@ public class SnakeTests
     }
 
     [TestMethod]
-    public void Clone_NullDirection_ReturnsNullDirection()
+    public void Snake_Clone_NullDirection_CloneDirectionIsNull()
     {
         var original = new Snake { Direction = null };
 
@@ -122,7 +122,7 @@ public class SnakeTests
     }
 
     [TestMethod]
-    public void Clone_ReturnsNewInstance()
+    public void Snake_Clone_AnySnake_ReturnsNewInstance()
     {
         var original = new Snake { Id = 1 };
 
@@ -134,7 +134,7 @@ public class SnakeTests
     // ==================== Property Assignment ====================
 
     [TestMethod]
-    public void Properties_CanBeSetToNullableTrue()
+    public void Snake_Properties_NullableBooleans_CanBeSetToTrue()
     {
         var s = new Snake
         {

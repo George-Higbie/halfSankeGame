@@ -2,9 +2,8 @@ Server/bin/
 Server/obj/
 Server/publish/
 Server/lib/
-Server-osx-arm64/Server.bak
-Server-osx-arm64/publish/
-Server-win-x64/
+Server.bak
+Server*/publish/
 
 # .NET build outputs
 GUI/bin/

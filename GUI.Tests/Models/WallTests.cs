@@ -15,7 +15,7 @@ namespace GUI.Tests.Models;
 public class WallTests
 {
     [TestMethod]
-    public void DefaultWall_HasZeroIdAndNullEndpoints()
+    public void Wall_DefaultConstructor_NoArgs_HasZeroIdAndNullEndpoints()
     {
         var w = new Wall();
 
@@ -25,7 +25,7 @@ public class WallTests
     }
 
     [TestMethod]
-    public void SetProperties_ReflectsValues()
+    public void Wall_Properties_SetAllValues_ReflectsCorrectly()
     {
         var w = new Wall
         {
@@ -42,7 +42,7 @@ public class WallTests
     }
 
     [TestMethod]
-    public void VerticalWall_PointsShareXCoordinate()
+    public void Wall_Point1Point2_VerticalOrientation_SameXCoordinate()
     {
         var w = new Wall
         {
@@ -54,7 +54,7 @@ public class WallTests
     }
 
     [TestMethod]
-    public void HorizontalWall_PointsShareYCoordinate()
+    public void Wall_Point1Point2_HorizontalOrientation_SameYCoordinate()
     {
         var w = new Wall
         {
@@ -62,6 +62,18 @@ public class WallTests
             Point2 = new Point2D(300, 50)
         };
 
+        Assert.AreEqual(w.Point1!.Y, w.Point2!.Y);
+    }
+    [TestMethod]
+    public void Wall_BothPoints_Equal_DegenerateWall_PointsAreEqual()
+    {
+        var w = new Wall
+        {
+            Point1 = new Point2D(50, 50),
+            Point2 = new Point2D(50, 50)
+        };
+
+        Assert.AreEqual(w.Point1!.X, w.Point2!.X);
         Assert.AreEqual(w.Point1!.Y, w.Point2!.Y);
     }
 }
