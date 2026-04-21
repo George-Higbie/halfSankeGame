@@ -10,9 +10,13 @@ GUI/bin/
 GUI/obj/
 GUI.Tests/bin/
 GUI.Tests/obj/
+*.lscache
 
 # Coverage output
 coverage-results/
 
 # Crash dumps
 core
+
+# F*** MAC
+.DS_Store
