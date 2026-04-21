@@ -41,12 +41,12 @@ else
     <h2 style="margin:0 0 12px; font-size:1.1rem; letter-spacing:1px;">@(_splitScreen ? "PLAYER 1" : "SNAKE")</h2>
 
     <div class="field-group">
-        <label>Host</label>
-        <input @bind="Host" />
+        <label>Server Host</label>
+        <input value="@ServerHost" disabled />
     </div>
     <div class="field-group">
-        <label>Port</label>
-        <input type="number" @bind="Port" />
+        <label>Game Port</label>
+        <input type="number" value="@ServerPort" disabled />
     </div>
     <div class="field-group">
         <label>@(_splitScreen ? "P1 Name" : "Name")</label>
@@ -309,11 +309,11 @@ else
 
     // ==================== UI State ====================
 
-    /// <summary>Server hostname or IP address.</summary>
-    private string Host { get; set; } = "localhost";
+    /// <summary>Assignment server hostname for snake game connections.</summary>
+    private const string ServerHost = "localhost";
 
-    /// <summary>Server TCP port.</summary>
-    private int Port { get; set; } = 11000;
+    /// <summary>Assignment server TCP port for snake game connections.</summary>
+    private const int ServerPort = 11000;
 
     /// <summary>Player 1 display name sent to the server.</summary>
     private string PlayerName { get; set; } = "Player 1";
@@ -820,7 +820,7 @@ else
         {
             _status = "Connecting...";
             StateHasChanged();
-            await GameController.ConnectAsync(Host, Port, PlayerName, _p1SkinIndex);
+            await GameController.ConnectAsync(ServerHost, ServerPort, PlayerName, _p1SkinIndex);
             _status = "Connected";
             StateHasChanged();
         }
@@ -847,7 +847,7 @@ else
         {
             _p2Status = "Connecting...";
             StateHasChanged();
-            await _p2Game.ConnectAsync(Host, Port, Player2Name, _p2SkinIndex);
+            await _p2Game.ConnectAsync(ServerHost, ServerPort, Player2Name, _p2SkinIndex);
             _p2Status = "Connected";
             StateHasChanged();
         }
