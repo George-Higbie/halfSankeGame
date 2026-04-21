@@ -20,6 +20,13 @@ coverage-results/
 # Crash dumps
 core
 
+# Local run/debug artifacts
+.start_info
+ps9-e2e.log
+ps9-e2e.pid
+*.log
+*.pid
+
 # F*** MAC
 .DS_Store
 

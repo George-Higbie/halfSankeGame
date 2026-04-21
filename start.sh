@@ -26,6 +26,10 @@ pick_lan_ip() {
   printf '%s' "$ip"
 }
 
+list_local_ipv4s() {
+  ifconfig | awk '/inet / {print $2}' | grep -Ev '^127\.' | sort -u
+}
+
 echo "Building Server from source..."
 cd Server
 dotnet build -c Debug -o bin/run 2>&1
@@ -50,5 +54,20 @@ echo "GUI URL: http://0.0.0.0:${SELECTED_GUI_PORT}"
 if [[ -n "$LAN_IP" ]]; then
   echo "LAN URL: http://${LAN_IP}:${SELECTED_GUI_PORT}/snake"
 fi
+echo "Detected local IPv4 addresses:"
+list_local_ipv4s | sed 's/^/  - /'
 echo "Press Ctrl+C to stop both GUI and server."
+
+# Run a short self-probe after startup to show which local IPs are reachable.
+(
+  sleep 4
+  local_ips="$(list_local_ipv4s)"
+  while IFS= read -r ip; do
+    [[ -z "$ip" ]] && continue
+    if curl -sS --max-time 2 "http://${ip}:${SELECTED_GUI_PORT}/health" >/dev/null 2>&1; then
+      echo "Reachable local URL: http://${ip}:${SELECTED_GUI_PORT}/snake"
+    fi
+  done <<< "$local_ips"
+) &
+
 ASPNETCORE_ENVIRONMENT="Development" GAME_SERVER_HOST="${LAN_IP:-localhost}" GAME_SERVER_PORT="11000" GUI_BIND_PORT="${SELECTED_GUI_PORT}" ASPNETCORE_URLS="http://0.0.0.0:${SELECTED_GUI_PORT}" dotnet run
