@@ -36,6 +36,13 @@ namespace GUI.Components.Models
         [JsonPropertyName("score")]
         public int? Score { get; set; }
 
+        /// <summary>
+        /// Highest score observed for this snake during the current client session.
+        /// This is client-side bookkeeping only and is not sent by the game server.
+        /// </summary>
+        [JsonIgnore]
+        public int MaxScore { get; set; }
+
         /// <summary>Whether the snake died this frame.</summary>
         [JsonPropertyName("died")]
         public bool? Died { get; set; }
@@ -66,6 +73,7 @@ namespace GUI.Components.Models
             Body = Body?.Select(p => new Point2D(p.X, p.Y)).ToList(),
             Direction = Direction != null ? new Point2D(Direction.X, Direction.Y) : null,
             Score = Score,
+            MaxScore = MaxScore,
             Died = Died,
             Alive = Alive,
             Disconnected = Disconnected,

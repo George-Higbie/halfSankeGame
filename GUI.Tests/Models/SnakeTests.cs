@@ -26,6 +26,7 @@ public class SnakeTests
         Assert.IsNull(s.Body);
         Assert.IsNull(s.Direction);
         Assert.IsNull(s.Score);
+        Assert.AreEqual(0, s.MaxScore);
         Assert.IsNull(s.Died);
         Assert.IsNull(s.Alive);
         Assert.IsNull(s.Disconnected);
@@ -43,6 +44,7 @@ public class SnakeTests
             Id = 5,
             Name = "TestSnake",
             Score = 42,
+            MaxScore = 100,
             Died = false,
             Alive = true,
             Disconnected = false,
@@ -55,6 +57,7 @@ public class SnakeTests
         Assert.AreEqual(5, clone.Id);
         Assert.AreEqual("TestSnake", clone.Name);
         Assert.AreEqual(42, clone.Score);
+        Assert.AreEqual(100, clone.MaxScore);
         Assert.IsFalse(clone.Died);
         Assert.IsTrue(clone.Alive);
         Assert.IsFalse(clone.Disconnected);

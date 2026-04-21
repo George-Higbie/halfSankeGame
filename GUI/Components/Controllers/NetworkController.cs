@@ -82,8 +82,8 @@ namespace GUI.Components.Controllers
             _client = new TcpClient();
             await _client.ConnectAsync(host, port);
             var stream = _client.GetStream();
-            _reader = new StreamReader(stream, Encoding.UTF8);
-            _writer = new StreamWriter(stream, Encoding.UTF8) { NewLine = "\n", AutoFlush = true };
+            _reader = new StreamReader(stream, new UTF8Encoding(false));
+            _writer = new StreamWriter(stream, new UTF8Encoding(false)) { NewLine = "\n", AutoFlush = true };
 
             await _writer.WriteAsync($"{playerName}\n{skinIndex}\n");
 

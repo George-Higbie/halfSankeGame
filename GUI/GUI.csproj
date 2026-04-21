@@ -15,6 +15,7 @@
 
     <ItemGroup>
       <PackageReference Include="Blazor.Extensions.Canvas" Version="1.1.1" />
+      <PackageReference Include="MySql.Data" Version="9.5.0" />
     </ItemGroup>
 
 </Project>

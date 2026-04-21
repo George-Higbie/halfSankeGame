@@ -10,6 +10,8 @@ GUI/bin/
 GUI/obj/
 GUI.Tests/bin/
 GUI.Tests/obj/
+WebServer/bin/
+WebServer/obj/
 *.lscache
 
 # Coverage output

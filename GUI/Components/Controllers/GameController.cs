@@ -27,6 +27,17 @@ namespace GUI.Components.Controllers
         private ConcurrentDictionary<int, Wall> _pendingWalls = new();
         private int? _pendingPlayerId;
         private int? _pendingWorldSize;
+        private readonly ScoreDatabaseController? _scoreDb;
+        private int? _currentGameId;
+        private bool _sessionFinalized;
+        private readonly Dictionary<int, PlayerSessionState> _playerSessionStates = new();
+
+        private sealed class PlayerSessionState
+        {
+            public int MaxScore { get; set; }
+
+            public bool LeaveRecorded { get; set; }
+        }
 
         /// <summary>The server-assigned player ID for this client.</summary>
         public int? PlayerId { get; private set; }
@@ -43,18 +54,20 @@ namespace GUI.Components.Controllers
         /// Initializes the game controller and subscribes to network events.
         /// </summary>
         /// <param name="network">The network controller to subscribe to. Must not be null.</param>
+        /// <param name="scoreDb">Optional score database controller for PS10 live persistence.</param>
         /// <exception cref="ArgumentNullException">Thrown when <paramref name="network"/> is null.</exception>
-        public GameController(NetworkController network)
+        public GameController(NetworkController network, ScoreDatabaseController? scoreDb = null)
         {
             ArgumentNullException.ThrowIfNull(network);
 
             _network = network;
+            _scoreDb = scoreDb;
             _network.OnPlayerIdReceived += HandlePlayerIdReceived;
             _network.OnWorldSizeReceived += HandleWorldSizeReceived;
             _network.OnWallReceived += HandleWallReceived;
             _network.OnSnakeReceived += HandleSnakeReceived;
             _network.OnPowerupReceived += HandlePowerupReceived;
-            _network.OnDisconnected += () => OnStateUpdated?.Invoke();
+            _network.OnDisconnected += HandleNetworkDisconnected;
         }
 
         /// <summary>Returns a thread-safe deep-copied snapshot of all snakes.</summary>
@@ -92,6 +105,7 @@ namespace GUI.Components.Controllers
             try
             {
                 await _network.ConnectAsync(host, port, name, skinIndex);
+                StartGameSession(DateTime.Now);
             }
             catch
             {
@@ -103,6 +117,7 @@ namespace GUI.Components.Controllers
         /// <summary>Disconnects from the server and clears all local game state.</summary>
         public void Disconnect()
         {
+            FinalizeGameSession(DateTime.Now);
             _network.Disconnect();
             _isInitializing = false;
             PlayerId = null;
@@ -161,29 +176,39 @@ namespace GUI.Components.Controllers
             OnStateUpdated?.Invoke();
         }
 
+        private void HandleNetworkDisconnected()
+        {
+            FinalizeGameSession(DateTime.Now);
+            OnStateUpdated?.Invoke();
+        }
+
         private void HandleSnakeReceived(Snake s)
         {
             CommitPendingStateIfInitializing();
 
             if (s.Disconnected.HasValue && s.Disconnected.Value && _snakes.ContainsKey(s.Id))
             {
+                RecordPlayerLeave(s.Id, DateTime.Now);
                 _snakes.TryRemove(s.Id, out _);
             }
             else if (_snakes.TryGetValue(s.Id, out var existing))
             {
                 var wasAlive = existing.Died != true;
                 MergeSnakeFields(existing, s);
+                RecordPlayerSeen(existing, DateTime.Now);
                 if (existing.Died == true && wasAlive && PlayerId.HasValue && s.Id == PlayerId.Value)
                     OnPlayerDied?.Invoke();
             }
             else
             {
                 s.Score ??= 0;
+                s.MaxScore = s.Score.Value;
                 s.Died ??= false;
                 s.Alive ??= false;
                 s.Joined ??= false;
                 s.Disconnected ??= false;
                 _snakes[s.Id] = s;
+                RecordPlayerSeen(s, DateTime.Now);
             }
 
             OnStateUpdated?.Invoke();
@@ -206,7 +231,11 @@ namespace GUI.Components.Controllers
         /// </summary>
         private static void MergeSnakeFields(Snake existing, Snake update)
         {
-            if (update.Score.HasValue) existing.Score = update.Score;
+            if (update.Score.HasValue)
+            {
+                existing.Score = update.Score;
+                existing.MaxScore = Math.Max(existing.MaxScore, update.Score.Value);
+            }
             if (update.Died.HasValue)
             {
                 existing.Died = update.Died;
@@ -223,6 +252,86 @@ namespace GUI.Components.Controllers
             if (update.Body != null) existing.Body = update.Body;
             if (update.Direction != null) existing.Direction = update.Direction;
             if (update.Skin.HasValue) existing.Skin = update.Skin;
+        }
+
+        private void StartGameSession(DateTime startTime)
+        {
+            if (_scoreDb == null)
+            {
+                return;
+            }
+
+            _playerSessionStates.Clear();
+            _currentGameId = _scoreDb.TryCreateGame(startTime);
+            _sessionFinalized = false;
+        }
+
+        private void FinalizeGameSession(DateTime endTime)
+        {
+            if (_sessionFinalized)
+            {
+                return;
+            }
+
+            _sessionFinalized = true;
+            if (_scoreDb == null || !_currentGameId.HasValue)
+            {
+                _currentGameId = null;
+                _playerSessionStates.Clear();
+                return;
+            }
+
+            foreach (var state in _playerSessionStates)
+            {
+                if (!state.Value.LeaveRecorded)
+                {
+                    _scoreDb.TrySetPlayerLeaveTime(_currentGameId.Value, state.Key, endTime);
+                    state.Value.LeaveRecorded = true;
+                }
+            }
+
+            _scoreDb.TrySetGameEndTime(_currentGameId.Value, endTime);
+            _currentGameId = null;
+            _playerSessionStates.Clear();
+        }
+
+        private void RecordPlayerSeen(Snake snake, DateTime seenTime)
+        {
+            if (_scoreDb == null || !_currentGameId.HasValue)
+            {
+                return;
+            }
+
+            var score = snake.Score ?? 0;
+            snake.MaxScore = Math.Max(snake.MaxScore, score);
+
+            if (!_playerSessionStates.TryGetValue(snake.Id, out var state))
+            {
+                state = new PlayerSessionState { MaxScore = snake.MaxScore, LeaveRecorded = false };
+                _playerSessionStates[snake.Id] = state;
+                _scoreDb.TryInsertPlayer(_currentGameId.Value, snake.Id, snake.Name ?? $"Player {snake.Id}", snake.MaxScore, seenTime);
+                return;
+            }
+
+            if (snake.MaxScore > state.MaxScore)
+            {
+                state.MaxScore = snake.MaxScore;
+                _scoreDb.TryUpdatePlayerMaxScore(_currentGameId.Value, snake.Id, snake.MaxScore);
+            }
+        }
+
+        private void RecordPlayerLeave(int snakeId, DateTime leaveTime)
+        {
+            if (_scoreDb == null || !_currentGameId.HasValue)
+            {
+                return;
+            }
+
+            if (_playerSessionStates.TryGetValue(snakeId, out var state) && !state.LeaveRecorded)
+            {
+                _scoreDb.TrySetPlayerLeaveTime(_currentGameId.Value, snakeId, leaveTime);
+                state.LeaveRecorded = true;
+            }
         }
     }
 }

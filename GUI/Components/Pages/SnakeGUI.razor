@@ -445,7 +445,7 @@ else
 
         // Create P2 controllers (P1 uses DI-injected ones)
         _p2Network = new NetworkController();
-        _p2Game = new GameController(_p2Network);
+        _p2Game = new GameController(_p2Network, new ScoreDatabaseController());
 
         await JsRuntime.InvokeAsync<IJSObjectReference>("import", "./Components/Pages/SnakeGUI.razor.js");
         _context = await _canvasReference!.CreateCanvas2DAsync();
