@@ -16,8 +16,22 @@
 @inject IJSRuntime JsRuntime;
 @inject GameController GameController
 @inject GUI.Components.Controllers.NetworkController NetworkController
+@inject ScoreDatabaseController ScoreDatabase
 
 <PageTitle>Snake</PageTitle>
+
+@if (!string.IsNullOrWhiteSpace(_fatalErrorTitle))
+{
+    <div class="error-overlay" role="alert">
+        <div class="error-card">
+            <h2>@_fatalErrorTitle</h2>
+            <p>@_fatalErrorMessage</p>
+            <div class="error-actions">
+                <button class="btn-snake" @onclick="DismissFatalError">Dismiss</button>
+            </div>
+        </div>
+    </div>
+}
 
 @* ── Sidebar Toggle(s) ── *@
 @if (_splitScreen)
@@ -38,23 +52,41 @@ else
 
 @* ── P1 Sidebar (left in split, right in single) ── *@
 <div class="snake-sidebar @(_splitScreen ? "snake-sidebar-left" : "") @((_splitScreen ? _p1SidebarOpen : _sidebarOpen) ? "open" : "")">
-    <h2 style="margin:0 0 12px; font-size:1.1rem; letter-spacing:1px;">@(_splitScreen ? "PLAYER 1" : "SNAKE")</h2>
+    <h2 class="sidebar-title">@(_splitScreen ? "PLAYER 1" : "SNAKE")</h2>
 
     <div class="field-group">
-        <label>Server Host</label>
-        <input value="@ServerHost" disabled />
-    </div>
-    <div class="field-group">
-        <label>Game Port</label>
-        <input type="number" value="@ServerPort" disabled />
+        <label>Open Games</label>
+        <div class="games-list" id="gamesList" tabindex="0">
+            @if (_openGames.Count == 0)
+            {
+                <div class="game-item empty">No open games found. Create one to start.</div>
+            }
+            else
+            {
+                @foreach (var game in _openGames)
+                {
+                    <button type="button"
+                            class="game-item @(game.GameId == _selectedGameId ? "selected" : "")"
+                            @onclick="(() => SelectGame(game.GameId))">
+                        <span class="game-id">Game #@game.GameId</span>
+                        <span class="game-host">@game.Host:@game.Port</span>
+                        <span class="game-start">@game.StartTime.ToLocalTime().ToString("g")</span>
+                    </button>
+                }
+            }
+        </div>
+        @if (!string.IsNullOrWhiteSpace(_dbStatusMessage))
+        {
+            <div class="db-status">@_dbStatusMessage</div>
+        }
     </div>
     <div class="field-group">
         <label>@(_splitScreen ? "P1 Name" : "Name")</label>
         <input id="p1NameInput" class="@(_p1MenuIndex == 0 ? "menu-focused" : "")" @bind="PlayerName" disabled="@(_p1Playing)" />
     </div>
 
-    <div class="skin-section" style="margin-top:6px; padding:4px;">
-        <label style="display:block;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.5px;opacity:0.6;margin-bottom:4px;">@(_splitScreen ? "P1 Skin" : "Skin")</label>
+    <div class="skin-section">
+        <label class="section-label">@(_splitScreen ? "P1 Skin" : "Skin")</label>
         <div class="skin-grid">
             <SkinGrid SelectedIndex="_p1SkinIndex"
                       KeyboardFocusIndex="@(_p1MenuIndex == 1 ? _p1SkinIndex : -1)"
@@ -63,15 +95,17 @@ else
         </div>
         <div class="skin-preview-bar">
             <BECanvas Width="160" Height="40" @ref="_p1PreviewRef"></BECanvas>
-            <span style="font-size:0.72rem;opacity:0.6;">@SnakeSkin.AllSkins[_p1SkinIndex].Name</span>
+            <span class="preview-name">@SnakeSkin.AllSkins[_p1SkinIndex].Name</span>
         </div>
     </div>
 
-    <button class="btn-snake @(_p1MenuIndex == 2 ? "menu-focused" : "")" style="width:100%; margin-top:8px;" @onclick="(() => Connect())">@(_splitScreen ? "Connect P1" : "Connect")</button>
+    <button class="btn-snake btn-full @(_p1MenuIndex == 2 ? "menu-focused" : "")" @onclick="(() => ConnectSelectedGame())">@(_splitScreen ? "Connect P1" : "Connect Selected")</button>
+    <button class="btn-snake btn-full btn-secondary" @onclick="(() => CreateAndConnectGame())">Create Game</button>
+    <button class="btn-snake btn-full btn-secondary" @onclick="RefreshOpenGamesAsync">Refresh Games</button>
 
-    <div class="status-line">@_status @if (_status == "Disconnected" || _status == "Game Over") { <span style="opacity:0.5; font-size:0.85em;">— @(_splitScreen ? "Left Shift" : "Shift") to start</span> }</div>
+    <div class="status-line">@_status @if (_status == "Disconnected" || _status == "Game Over") { <span class="status-hint">— @(_splitScreen ? "Left Shift" : "Shift") to start</span> }</div>
 
-    <div style="margin-top:12px; border-top:1px solid rgba(255,255,255,0.1); padding-top:10px;">
+    <div class="toggles-block">
         <label class="toggle @(_p1MenuIndex == 3 ? "menu-focused" : "")"><input type="checkbox" @bind="_highQualityTextures" /> High Quality</label>
         <label class="toggle @(_p1MenuIndex == 4 ? "menu-focused" : "")"><input type="checkbox" @bind="_drawGrid" /> Grid Overlay</label>
         <label class="toggle @(_p1MenuIndex == 5 ? "menu-focused" : "")"><input type="checkbox" @bind="_showScoreboard" /> Scoreboard</label>
@@ -83,15 +117,15 @@ else
 @if (_splitScreen)
 {
 <div class="snake-sidebar @(_p2SidebarOpen ? "open" : "")">
-    <h2 style="margin:0 0 12px; font-size:1.1rem; letter-spacing:1px;">PLAYER 2</h2>
+    <h2 class="sidebar-title">PLAYER 2</h2>
 
     <div class="field-group">
         <label>P2 Name</label>
         <input id="p2NameInput" class="@(_p2MenuIndex == 0 ? "menu-focused" : "")" @bind="Player2Name" disabled="@(_p2Playing)" />
     </div>
 
-    <div class="skin-section" style="margin-top:6px; padding:4px;">
-        <label style="display:block;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.5px;opacity:0.6;margin-bottom:4px;">P2 Skin</label>
+    <div class="skin-section">
+        <label class="section-label">P2 Skin</label>
         <div class="skin-grid">
             <SkinGrid SelectedIndex="_p2SkinIndex"
                       KeyboardFocusIndex="@(_p2MenuIndex == 1 ? _p2SkinIndex : -1)"
@@ -100,13 +134,13 @@ else
         </div>
         <div class="skin-preview-bar">
             <BECanvas Width="160" Height="40" @ref="_p2PreviewRef"></BECanvas>
-            <span style="font-size:0.72rem;opacity:0.6;">@SnakeSkin.AllSkins[_p2SkinIndex].Name</span>
+            <span class="preview-name">@SnakeSkin.AllSkins[_p2SkinIndex].Name</span>
         </div>
     </div>
 
-    <button class="btn-snake @(_p2MenuIndex == 2 ? "menu-focused" : "")" style="width:100%; margin-top:8px;" @onclick="ConnectP2">Connect P2</button>
+    <button class="btn-snake btn-full @(_p2MenuIndex == 2 ? "menu-focused" : "")" @onclick="ConnectP2">Connect P2</button>
 
-    <div class="status-line">@_p2Status @if (_p2Status == "Disconnected" || _p2Status == "Game Over") { <span style="opacity:0.5; font-size:0.85em;">— Right Shift to start</span> }</div>
+    <div class="status-line">@_p2Status @if (_p2Status == "Disconnected" || _p2Status == "Game Over") { <span class="status-hint">— Right Shift to start</span> }</div>
 </div>
 }
 
@@ -309,11 +343,26 @@ else
 
     // ==================== UI State ====================
 
-    /// <summary>Assignment server hostname for snake game connections.</summary>
-    private const string ServerHost = "localhost";
+    /// <summary>Default game-server host advertised when creating a new game.</summary>
+    private readonly string _defaultGameHost = Environment.GetEnvironmentVariable("GAME_SERVER_HOST") ?? "localhost";
 
-    /// <summary>Assignment server TCP port for snake game connections.</summary>
-    private const int ServerPort = 11000;
+    /// <summary>Default game-server port advertised when creating a new game.</summary>
+    private readonly int _defaultGamePort = int.TryParse(Environment.GetEnvironmentVariable("GAME_SERVER_PORT"), out int envPort) ? envPort : 11000;
+
+    /// <summary>Open game sessions discovered from the score database.</summary>
+    private readonly List<LiveGameSession> _openGames = [];
+
+    /// <summary>Currently selected game ID from the open-games list.</summary>
+    private int? _selectedGameId;
+
+    /// <summary>Non-fatal DB status text shown under the games selector.</summary>
+    private string? _dbStatusMessage;
+
+    /// <summary>Error title shown in the full-screen error overlay.</summary>
+    private string? _fatalErrorTitle;
+
+    /// <summary>Error details shown in the full-screen error overlay.</summary>
+    private string? _fatalErrorMessage;
 
     /// <summary>Player 1 display name sent to the server.</summary>
     private string PlayerName { get; set; } = "Player 1";
@@ -445,7 +494,7 @@ else
 
         // Create P2 controllers (P1 uses DI-injected ones)
         _p2Network = new NetworkController();
-        _p2Game = new GameController(_p2Network, new ScoreDatabaseController());
+        _p2Game = new GameController(_p2Network, ScoreDatabase);
 
         await JsRuntime.InvokeAsync<IJSObjectReference>("import", "./Components/Pages/SnakeGUI.razor.js");
         _context = await _canvasReference!.CreateCanvas2DAsync();
@@ -453,6 +502,8 @@ else
 
         _renderCts = new CancellationTokenSource();
         _ = Task.Run(() => RenderLoopAsync(_renderCts.Token));
+
+        await RefreshOpenGamesAsync();
 
         NetworkController.OnDisconnected += () => _ = InvokeAsync(() => { _status = "Disconnected"; StateHasChanged(); });
         _p2Network.OnDisconnected += () => _ = InvokeAsync(() => { _p2Status = "Disconnected"; StateHasChanged(); });
@@ -804,58 +855,172 @@ else
 
     // ==================== Connection ====================
 
-    /// <summary>Disconnects any existing P1 session and connects with current settings.</summary>
-    private async Task Connect()
+    /// <summary>Loads open game sessions from SQL and preserves selection when possible.</summary>
+    private Task RefreshOpenGamesAsync()
     {
-        _showDeathScreen = false;
-        lock (_p1MoveLock) _p1MoveQueue.Clear();
-        _p1LastSentDir = null;
-        _p1Ready = false;
-        _p1Cam.Reset();
-        if (_splitScreen) _p1SidebarOpen = false;
-        else _sidebarOpen = false;
-        _renderer.ClearWallCache(GameController);
-        GameController.Disconnect();
         try
         {
-            _status = "Connecting...";
-            StateHasChanged();
-            await GameController.ConnectAsync(ServerHost, ServerPort, PlayerName, _p1SkinIndex);
-            _status = "Connected";
-            StateHasChanged();
+            var selected = _selectedGameId;
+            _openGames.Clear();
+            _openGames.AddRange(ScoreDatabase.GetOpenGameSessions());
+
+            if (selected.HasValue && _openGames.Any(g => g.GameId == selected.Value))
+            {
+                _selectedGameId = selected;
+            }
+            else
+            {
+                _selectedGameId = _openGames.FirstOrDefault()?.GameId;
+            }
+
+            _dbStatusMessage = _openGames.Count == 0
+                ? "No active sessions are currently advertised."
+                : $"{_openGames.Count} active session(s) available.";
         }
         catch (Exception ex)
         {
-            _status = "Error: " + ex.Message;
+            _dbStatusMessage = "Unable to load games from the database.";
+            SetFatalError("Database Unavailable", ex.Message);
+        }
+
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    /// <summary>Selects a game in the open-session list.</summary>
+    private void SelectGame(int gameId)
+    {
+        _selectedGameId = gameId;
+    }
+
+    /// <summary>Dismisses the current full-screen error panel.</summary>
+    private void DismissFatalError()
+    {
+        _fatalErrorTitle = null;
+        _fatalErrorMessage = null;
+    }
+
+    /// <summary>Sets the full-screen error panel content.</summary>
+    private void SetFatalError(string title, string message)
+    {
+        _fatalErrorTitle = title;
+        _fatalErrorMessage = message;
+    }
+
+    /// <summary>Creates a new game endpoint advertisement and connects P1 to it.</summary>
+    private Task CreateAndConnectGame() => ConnectToEndpoint(_defaultGameHost, _defaultGamePort, PlayerName, _p1SkinIndex, isP1: true);
+
+    /// <summary>Connects P1 to the selected advertised game endpoint.</summary>
+    private Task ConnectSelectedGame()
+    {
+        var selected = _openGames.FirstOrDefault(g => g.GameId == _selectedGameId);
+        if (selected == null)
+        {
+            _status = "Select a game first";
+            SetFatalError("No Game Selected", "Choose an active game from the list or create a new one.");
+            StateHasChanged();
+            return Task.CompletedTask;
+        }
+
+        return ConnectToEndpoint(selected.Host, selected.Port, PlayerName, _p1SkinIndex, isP1: true);
+    }
+
+    /// <summary>Connects P2 to the selected advertised game endpoint.</summary>
+    private Task ConnectP2SelectedGame()
+    {
+        var selected = _openGames.FirstOrDefault(g => g.GameId == _selectedGameId);
+        if (selected == null)
+        {
+            _p2Status = "Select a game first";
+            SetFatalError("No Game Selected", "Choose an active game from the list before connecting Player 2.");
+            StateHasChanged();
+            return Task.CompletedTask;
+        }
+
+        return ConnectToEndpoint(selected.Host, selected.Port, Player2Name, _p2SkinIndex, isP1: false);
+    }
+
+    /// <summary>Connect helper that routes to P1/P2 controller paths.</summary>
+    private async Task ConnectToEndpoint(string host, int port, string playerName, int skinIndex, bool isP1)
+    {
+        if (isP1)
+        {
+            _showDeathScreen = false;
+            lock (_p1MoveLock) _p1MoveQueue.Clear();
+            _p1LastSentDir = null;
+            _p1Ready = false;
+            _p1Cam.Reset();
+            if (_splitScreen) _p1SidebarOpen = false;
+            else _sidebarOpen = false;
+            _renderer.ClearWallCache(GameController);
+            GameController.Disconnect();
+        }
+        else
+        {
+            if (_p2Game == null) return;
+            _p2ShowDeath = false;
+            lock (_p2MoveLock) _p2MoveQueue.Clear();
+            _p2LastSentDir = null;
+            _p2Ready = false;
+            _p2Cam.Reset();
+            _renderer.ClearWallCache(_p2Game);
+            _p2SidebarOpen = false;
+            _p2Game.Disconnect();
+        }
+
+        try
+        {
+            if (isP1)
+            {
+                _status = "Connecting...";
+            }
+            else
+            {
+                _p2Status = "Connecting...";
+            }
+
+            StateHasChanged();
+
+            if (isP1)
+            {
+                await GameController.ConnectAsync(host, port, playerName, skinIndex);
+                _status = "Connected";
+            }
+            else if (_p2Game != null)
+            {
+                await _p2Game.ConnectAsync(host, port, playerName, skinIndex);
+                _p2Status = "Connected";
+            }
+
+            DismissFatalError();
+            await RefreshOpenGamesAsync();
+        }
+        catch (Exception ex)
+        {
+            if (isP1)
+            {
+                _status = "Error: " + ex.Message;
+            }
+            else
+            {
+                _p2Status = "Error: " + ex.Message;
+            }
+
+            SetFatalError("Connection Failed", $"Could not connect to {host}:{port}. {ex.Message}");
             StateHasChanged();
         }
+    }
+
+    /// <summary>Disconnects any existing P1 session and connects with current settings.</summary>
+    private async Task Connect()
+    {
+        await ConnectSelectedGame();
     }
 
     /// <summary>Disconnects any existing P2 session and connects with current settings.</summary>
     private async Task ConnectP2()
     {
-        if (_p2Game == null) return;
-        _p2ShowDeath = false;
-        lock (_p2MoveLock) _p2MoveQueue.Clear();
-        _p2LastSentDir = null;
-        _p2Ready = false;
-        _p2Cam.Reset();
-        _renderer.ClearWallCache(_p2Game);
-        _p2SidebarOpen = false;
-        _p2Game.Disconnect();
-        try
-        {
-            _p2Status = "Connecting...";
-            StateHasChanged();
-            await _p2Game.ConnectAsync(ServerHost, ServerPort, Player2Name, _p2SkinIndex);
-            _p2Status = "Connected";
-            StateHasChanged();
-        }
-        catch (Exception ex)
-        {
-            _p2Status = "Error: " + ex.Message;
-            StateHasChanged();
-        }
+        await ConnectP2SelectedGame();
     }
 
     /// <summary>Sends a respawn command for P1 and dismisses the death overlay.</summary>

@@ -29,6 +29,8 @@ namespace GUI.Components.Controllers
         private int? _pendingWorldSize;
         private readonly ScoreDatabaseController? _scoreDb;
         private int? _currentGameId;
+        private string? _currentHost;
+        private int? _currentPort;
         private bool _sessionFinalized;
         private readonly Dictionary<int, PlayerSessionState> _playerSessionStates = new();
 
@@ -102,6 +104,8 @@ namespace GUI.Components.Controllers
             _pendingPlayerId = null;
             _pendingWorldSize = null;
             _pendingWalls = new();
+            _currentHost = host;
+            _currentPort = port;
             try
             {
                 await _network.ConnectAsync(host, port, name, skinIndex);
@@ -262,7 +266,7 @@ namespace GUI.Components.Controllers
             }
 
             _playerSessionStates.Clear();
-            _currentGameId = _scoreDb.TryCreateGame(startTime);
+            _currentGameId = _scoreDb.TryCreateGame(startTime, _currentHost, _currentPort);
             _sessionFinalized = false;
         }
 
@@ -292,6 +296,8 @@ namespace GUI.Components.Controllers
 
             _scoreDb.TrySetGameEndTime(_currentGameId.Value, endTime);
             _currentGameId = null;
+            _currentHost = null;
+            _currentPort = null;
             _playerSessionStates.Clear();
         }
 

@@ -17,6 +17,15 @@ pick_gui_port() {
   printf '%s' "${GUI_PORT}"
 }
 
+pick_lan_ip() {
+  local ip
+  ip="$(ipconfig getifaddr en0 2>/dev/null || true)"
+  if [[ -z "$ip" ]]; then
+    ip="$(ipconfig getifaddr en1 2>/dev/null || true)"
+  fi
+  printf '%s' "$ip"
+}
+
 echo "Building Server from source..."
 cd Server
 dotnet build -c Debug -o bin/run 2>&1
@@ -27,12 +36,19 @@ fi
 
 cd ..
 
-echo "Starting GUI Client in the background..."
-cd GUI
-SELECTED_GUI_PORT="$(pick_gui_port)"
-echo "GUI URL: http://0.0.0.0:${SELECTED_GUI_PORT}"
-ASPNETCORE_ENVIRONMENT="Development" ASPNETCORE_URLS="http://0.0.0.0:${SELECTED_GUI_PORT}" dotnet run &
+echo "Starting Snake Server in the background..."
+cd Server/bin/run
+dotnet Server.dll &
+SERVER_PID=$!
+echo "Snake server PID: ${SERVER_PID}"
 
-echo "Starting Snake Server in the foreground..."
-cd ../Server/bin/run
-dotnet Server.dll
+echo "Starting GUI Client in the foreground..."
+cd ../../../GUI
+SELECTED_GUI_PORT="$(pick_gui_port)"
+LAN_IP="$(pick_lan_ip)"
+echo "GUI URL: http://0.0.0.0:${SELECTED_GUI_PORT}"
+if [[ -n "$LAN_IP" ]]; then
+  echo "LAN URL: http://${LAN_IP}:${SELECTED_GUI_PORT}/snake"
+fi
+echo "Press Ctrl+C to stop both GUI and server."
+ASPNETCORE_ENVIRONMENT="Development" GAME_SERVER_HOST="${LAN_IP:-localhost}" GAME_SERVER_PORT="11000" GUI_BIND_PORT="${SELECTED_GUI_PORT}" ASPNETCORE_URLS="http://0.0.0.0:${SELECTED_GUI_PORT}" dotnet run

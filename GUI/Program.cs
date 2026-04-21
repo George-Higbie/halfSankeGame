@@ -5,8 +5,36 @@
 // Date: 2026-04-12
 
 using GUI.Components;
+using System.Net;
+
+static int ResolveListenPort()
+{
+    string? explicitPort = Environment.GetEnvironmentVariable("GUI_BIND_PORT");
+    if (int.TryParse(explicitPort, out int guiBindPort))
+    {
+        return guiBindPort;
+    }
+
+    string? urls = Environment.GetEnvironmentVariable("ASPNETCORE_URLS");
+    if (!string.IsNullOrWhiteSpace(urls))
+    {
+        string firstUrl = urls.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)[0];
+        if (Uri.TryCreate(firstUrl, UriKind.Absolute, out Uri? parsedUrl) && parsedUrl.Port > 0)
+        {
+            return parsedUrl.Port;
+        }
+    }
+
+    return 5145;
+}
 
 var builder = WebApplication.CreateBuilder(args);
+int listenPort = ResolveListenPort();
+builder.WebHost.UseStaticWebAssets();
+builder.WebHost.ConfigureKestrel(options =>
+{
+    options.Listen(IPAddress.Any, listenPort);
+});
 
 // Add services to the container.
 builder.Services.AddRazorComponents()
@@ -33,9 +61,14 @@ if (!app.Environment.IsDevelopment())
 }
 
 app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
-app.UseHttpsRedirection();
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
 
 app.UseAntiforgery();
+
+app.MapGet("/health", () => Results.Text("ok", "text/plain"));
 
 app.MapStaticAssets();
 app.MapRazorComponents<App>()

@@ -5,12 +5,18 @@
 // Date: 2026-04-21
 
 using System;
+using System.Collections.Generic;
 using MySql.Data.MySqlClient;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace GUI.Components.Controllers
 {
+    /// <summary>
+    /// Lightweight descriptor for a currently open game endpoint advertised via SQL.
+    /// </summary>
+    public sealed record LiveGameSession(int GameId, string Host, int Port, DateTime StartTime);
+
     /// <summary>
     /// Persists live game/session data into the PS10 score database.
     /// </summary>
@@ -42,8 +48,10 @@ namespace GUI.Components.Controllers
         /// Inserts a new game row and returns the generated game ID.
         /// </summary>
         /// <param name="startTime">Client-observed connection time for the game.</param>
+        /// <param name="host">Advertised host for joining this game session.</param>
+        /// <param name="port">Advertised port for joining this game session.</param>
         /// <returns>The inserted game ID, or null if the insert failed.</returns>
-        public int? TryCreateGame(DateTime startTime)
+        public int? TryCreateGame(DateTime startTime, string? host = null, int? port = null)
         {
             try
             {
@@ -52,10 +60,12 @@ namespace GUI.Components.Controllers
 
                 using var cmd = conn.CreateCommand();
                 cmd.CommandText = @"
-                    INSERT INTO Games (StartTime, EndTime)
-                    VALUES (@startTime, NULL);
+                    INSERT INTO Games (StartTime, EndTime, Host, Port, IsActive)
+                    VALUES (@startTime, NULL, @host, @port, 1);
                     SELECT LAST_INSERT_ID();";
                 cmd.Parameters.AddWithValue("@startTime", startTime.ToString("yyyy-MM-dd H:mm:ss"));
+                cmd.Parameters.AddWithValue("@host", host);
+                cmd.Parameters.AddWithValue("@port", port);
 
                 var result = cmd.ExecuteScalar();
                 var gameId = result != null ? Convert.ToInt32(result) : (int?)null;
@@ -88,7 +98,8 @@ namespace GUI.Components.Controllers
                 using var cmd = conn.CreateCommand();
                 cmd.CommandText = @"
                     UPDATE Games
-                    SET EndTime = @endTime
+                    SET EndTime = @endTime,
+                        IsActive = 0
                     WHERE GameId = @gameId;";
                 cmd.Parameters.AddWithValue("@endTime", endTime.ToString("yyyy-MM-dd H:mm:ss"));
                 cmd.Parameters.AddWithValue("@gameId", gameId);
@@ -195,6 +206,46 @@ namespace GUI.Components.Controllers
             }
         }
 
+        /// <summary>
+        /// Returns active games that advertise a host/port endpoint for joining.
+        /// </summary>
+        public IReadOnlyList<LiveGameSession> GetOpenGameSessions()
+        {
+            var sessions = new List<LiveGameSession>();
+            try
+            {
+                using var conn = new MySqlConnection(ConnectionString);
+                conn.Open();
+
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText = @"
+                    SELECT GameId, Host, Port, StartTime
+                    FROM Games
+                    WHERE IsActive = 1
+                      AND Host IS NOT NULL
+                      AND Host <> ''
+                      AND Port IS NOT NULL
+                    ORDER BY StartTime DESC
+                    LIMIT 200;";
+
+                using var reader = cmd.ExecuteReader();
+                while (reader.Read())
+                {
+                    var gameId = reader.GetInt32("GameId");
+                    var host = reader.GetString("Host");
+                    var port = reader.GetInt32("Port");
+                    var startTime = reader.GetDateTime("StartTime");
+                    sessions.Add(new LiveGameSession(gameId, host, port, startTime));
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to query open game sessions.");
+            }
+
+            return sessions;
+        }
+
         private void EnsureTablesExist()
         {
             try
@@ -208,9 +259,18 @@ namespace GUI.Components.Controllers
                         GameId INT NOT NULL AUTO_INCREMENT,
                         StartTime DATETIME NOT NULL,
                         EndTime DATETIME NULL,
+                        Host VARCHAR(128) NULL,
+                        Port INT NULL,
+                        IsActive TINYINT(1) NOT NULL DEFAULT 1,
                         PRIMARY KEY (GameId)
                     );";
                 gamesCmd.ExecuteNonQuery();
+
+                using var hostIndexCmd = conn.CreateCommand();
+                hostIndexCmd.CommandText = @"
+                    CREATE INDEX IF NOT EXISTS idx_games_active_host_port
+                    ON Games (IsActive, Host, Port);";
+                hostIndexCmd.ExecuteNonQuery();
 
                 using var playersCmd = conn.CreateCommand();
                 playersCmd.CommandText = @"
