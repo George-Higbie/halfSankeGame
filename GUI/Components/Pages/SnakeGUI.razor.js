@@ -58,7 +58,7 @@ let lastFrameAt = 0;
 const snakePredictionStateById = new Map();
 
 /** Maximum deviation (in pixels) allowed between client prediction and server position. */
-const PREDICTION_TOLERANCE_PIXELS = 25;
+const PREDICTION_TOLERANCE_PIXELS = 7;
 
 /** Represent a predicted snake state for reconciliation. */
 class SnakePredictionState {
