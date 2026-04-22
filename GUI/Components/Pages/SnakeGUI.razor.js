@@ -14,6 +14,53 @@ let instance = null;
 /** @type {HTMLCanvasElement|null} The main game canvas element. */
 let canvasEl = null;
 
+/** @type {CanvasRenderingContext2D|null} 2D rendering context for the gameplay canvas. */
+let renderCtx = null;
+
+/** @type {any} Latest render state pushed from .NET. */
+let latestRenderState = null;
+
+/** @type {Array<any>} Skin catalog pushed from .NET and used by the browser renderer. */
+let skinCatalog = [];
+
+/** @type {number} requestAnimationFrame handle for the browser render loop. */
+let renderLoopHandle = 0;
+
+/** @type {number} Timestamp of the last browser-rendered frame. */
+let lastFrameAt = 0;
+
+/** Persistent camera state for each viewport. */
+const cameraStates = {
+    p1: { x: 0, y: 0, initialized: false },
+    p2: { x: 0, y: 0, initialized: false }
+};
+
+const BODY_PATTERN = {
+    SOLID: 0,
+    STRIPE: 1,
+    CHECKER: 2,
+    DIAMOND: 3,
+    WAVE: 4
+};
+
+const SNAKE_WIDTH = 10;
+const GRID_SPACING = 50;
+const WALL_HALF_WIDTH = 25;
+const WALL_THICKNESS = 50;
+
+const DEFAULT_SKIN = {
+    bodyColor: '#4caf50',
+    bodyAccent: '#2e7d32',
+    bodyAccent2: null,
+    pattern: BODY_PATTERN.SOLID,
+    bellyColor: '#a5d6a7',
+    outlineColor: null,
+    headColor: '#388e3c',
+    eyeColor: 'white',
+    pupilColor: '#111',
+    deathColor: '#4caf50'
+};
+
 /** @type {HTMLElement|null} The scoreboard overlay element used for dither masking. */
 let _ditherEl = null;
 
@@ -141,6 +188,25 @@ window.updateScoreboardDither = (leftR, rightR) => {
 };
 
 /**
+ * Stores the full skin catalog pushed from .NET.
+ * @param {Array<any>} skins - The available snake skins.
+ */
+window.setSnakeSkinCatalog = (skins) => {
+    skinCatalog = Array.isArray(skins) ? skins : [];
+};
+
+/**
+ * Stores the latest render state for the browser-side gameplay canvas.
+ * @param {any} state - Latest world/render state from .NET.
+ */
+window.setSnakeRenderState = (state) => {
+    latestRenderState = state;
+    if (!state || !state.splitScreen) {
+        resetCamera(cameraStates.p2);
+    }
+};
+
+/**
  * Initializes the JS render environment. Stores the Blazor .NET reference,
  * locates the canvas element, performs the initial resize, and attaches
  * the window resize listener.
@@ -153,6 +219,11 @@ window.initRenderJS = (dotnetRef) => {
     ensureCanvas();
     resizeCanvas();
     window.addEventListener('resize', resizeCanvas);
+
+    if (!renderLoopHandle) {
+        lastFrameAt = performance.now();
+        renderLoopHandle = requestAnimationFrame(renderGameFrame);
+    }
 };
 
 /**
@@ -180,6 +251,7 @@ function resizeCanvas() {
     if (!canvasEl) return;
     canvasEl.width = window.innerWidth;
     canvasEl.height = window.innerHeight;
+    renderCtx = canvasEl.getContext('2d');
     if (instance) {
         instance.invokeMethodAsync('UpdateViewportSize', [window.innerWidth, window.innerHeight]);
     }
@@ -190,8 +262,567 @@ function resizeCanvas() {
  */
 function ensureCanvas() {
     if (!canvasEl) {
-        canvasEl = document.querySelector('#snakeCanvas canvas');
+        canvasEl = document.getElementById('snakeGameCanvas');
     }
+}
+
+/** Resets a viewport camera to an uninitialized state. */
+function resetCamera(camera) {
+    camera.x = 0;
+    camera.y = 0;
+    camera.initialized = false;
+}
+
+/**
+ * Main browser-side render loop for gameplay.
+ * @param {number} now - Current performance timestamp.
+ */
+function renderGameFrame(now) {
+    ensureCanvas();
+    if (canvasEl && !renderCtx) {
+        renderCtx = canvasEl.getContext('2d');
+    }
+
+    const dt = Math.min(0.05, Math.max(0.001, (now - lastFrameAt) / 1000 || 0.016));
+    lastFrameAt = now;
+
+    if (renderCtx && latestRenderState) {
+        drawGame(renderCtx, latestRenderState, dt, now / 1000);
+    }
+
+    renderLoopHandle = requestAnimationFrame(renderGameFrame);
+}
+
+/**
+ * Draws the current game state into the main canvas.
+ * @param {CanvasRenderingContext2D} ctx - Canvas rendering context.
+ * @param {any} state - Latest render state from .NET.
+ * @param {number} dt - Seconds since last rendered frame.
+ * @param {number} timeSeconds - Wall-clock time in seconds for animations.
+ */
+function drawGame(ctx, state, dt, timeSeconds) {
+    const width = canvasEl.width;
+    const height = canvasEl.height;
+
+    ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = state.highQualityTextures ? '#7c9c45' : '#e8f5ff';
+    ctx.fillRect(0, 0, width, height);
+
+    let p1Head = null;
+    let p2Head = null;
+
+    if (state.splitScreen && state.p2) {
+        const halfW = Math.floor(width / 2);
+        p1Head = drawViewport(ctx, state, state.p1, 0, 0, halfW, height, dt, timeSeconds, cameraStates.p1);
+        p2Head = drawViewport(ctx, state, state.p2, halfW, 0, halfW, height, dt, timeSeconds, cameraStates.p2);
+
+        ctx.save();
+        ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(halfW, 0);
+        ctx.lineTo(halfW, height);
+        ctx.stroke();
+
+        ctx.fillStyle = 'rgba(255,255,255,0.55)';
+        ctx.font = "700 16px 'Avenir Next', 'Segoe UI', sans-serif";
+        ctx.textAlign = 'center';
+        ctx.fillText('P1 (WASD)', halfW / 2, 24);
+        ctx.fillText('P2 (Arrows)', halfW + halfW / 2, 24);
+        ctx.restore();
+    }
+    else if (state.p1) {
+        resetCamera(cameraStates.p2);
+        p1Head = drawViewport(ctx, state, state.p1, 0, 0, width, height, dt, timeSeconds, cameraStates.p1);
+    }
+
+    if (state.showScoreboard && state.p1 && state.p1.playerId != null) {
+        if (state.splitScreen && state.p2) {
+            const radii = computeSplitDitherRadii(width, p1Head, p2Head, state.p1.showDeath, state.p2.showDeath);
+            window.updateScoreboardDither(radii.leftR, radii.rightR);
+        }
+        else {
+            const ditherR = state.p1.showDeath ? -1 : computeDitherForHead(p1Head, 12, 12, 224, 192);
+            window.updateScoreboardDither(ditherR, -1);
+        }
+    }
+    else {
+        window.updateScoreboardDither(-1, -1);
+    }
+}
+
+/**
+ * Draws a single viewport and returns the player's head in screen space.
+ * @returns {{x:number,y:number}|null}
+ */
+function drawViewport(ctx, state, viewport, vx, vy, vw, vh, dt, timeSeconds, camera) {
+    if (!viewport) {
+        return null;
+    }
+
+    const snakes = Array.isArray(viewport.snakes) ? viewport.snakes : [];
+    const worldSize = viewport.worldSize || 2000;
+    const playerId = viewport.playerId;
+
+    let centerSnake = null;
+    if (viewport.centerTargetSnakeId != null) {
+        centerSnake = snakes.find((snake) => snake.snake === viewport.centerTargetSnakeId) || null;
+    }
+    if (!centerSnake && playerId != null) {
+        centerSnake = snakes.find((snake) => snake.snake === playerId) || null;
+    }
+
+    let targetCamX = 0;
+    let targetCamY = 0;
+    if (viewport.showDeath) {
+        targetCamX = viewport.frozenCameraX || 0;
+        targetCamY = viewport.frozenCameraY || 0;
+    }
+    else {
+        const centerBody = centerSnake?.body;
+        if (Array.isArray(centerBody) && centerBody.length > 0) {
+            const head = centerBody[centerBody.length - 1];
+            targetCamX = head.X;
+            targetCamY = head.Y;
+        }
+    }
+
+    const halfWorld = worldSize / 2;
+    const minCx = -halfWorld + vw / 2;
+    const maxCx = halfWorld - vw / 2;
+    const minCy = -halfWorld + vh / 2;
+    const maxCy = halfWorld - vh / 2;
+    targetCamX = minCx < maxCx ? clamp(targetCamX, minCx, maxCx) : 0;
+    targetCamY = minCy < maxCy ? clamp(targetCamY, minCy, maxCy) : 0;
+
+    if (!camera.initialized) {
+        camera.x = targetCamX;
+        camera.y = targetCamY;
+        camera.initialized = true;
+    }
+    else {
+        const lerpFactor = 1 - Math.exp(-8 * dt);
+        camera.x += (targetCamX - camera.x) * lerpFactor;
+        camera.y += (targetCamY - camera.y) * lerpFactor;
+    }
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(vx, vy, vw, vh);
+    ctx.clip();
+
+    const camX = vx + vw / 2 - camera.x;
+    const camY = vy + vh / 2 - camera.y;
+    ctx.translate(camX, camY);
+
+    if (state.drawGrid && state.highQualityTextures) {
+        drawGrid(ctx, worldSize);
+    }
+
+    drawWalls(ctx, viewport.walls || [], state.highQualityTextures);
+    drawPowerups(ctx, viewport.powerups || [], state.highQualityTextures, timeSeconds);
+    const head = drawSnakes(ctx, snakes, playerId, viewport.playerSkinIndex, viewport.showDeath);
+
+    ctx.restore();
+    return head ? { x: head.x + camX, y: head.y + camY } : null;
+}
+
+/** Draws the faint world grid. */
+function drawGrid(ctx, worldSize) {
+    const hw = worldSize / 2;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(0,0,0,0.05)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let i = -hw; i <= hw; i += GRID_SPACING) {
+        ctx.moveTo(i, -hw);
+        ctx.lineTo(i, hw);
+        ctx.moveTo(-hw, i);
+        ctx.lineTo(hw, i);
+    }
+    ctx.stroke();
+    ctx.restore();
+}
+
+/** Draws all walls using a light bevel in high-quality mode. */
+function drawWalls(ctx, walls, highQuality) {
+    for (const wall of walls) {
+        const rect = wallRect(wall);
+        if (!rect) continue;
+
+        if (!highQuality) {
+            ctx.fillStyle = '#555555';
+            ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+            continue;
+        }
+
+        const gradient = ctx.createLinearGradient(rect.x, rect.y, rect.x + rect.w, rect.y + rect.h);
+        gradient.addColorStop(0, '#857568');
+        gradient.addColorStop(1, '#5f5247');
+        ctx.fillStyle = gradient;
+        ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+
+        ctx.strokeStyle = 'rgba(255,255,255,0.16)';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(rect.x + 1, rect.y + 1, Math.max(0, rect.w - 2), Math.max(0, rect.h - 2));
+
+        ctx.fillStyle = 'rgba(0,0,0,0.12)';
+        ctx.fillRect(rect.x, rect.y + rect.h - 3, rect.w, 3);
+        ctx.fillRect(rect.x + rect.w - 3, rect.y, 3, rect.h);
+    }
+}
+
+/** Draws active powerups. */
+function drawPowerups(ctx, powerups, highQuality, timeSeconds) {
+    for (const powerup of powerups) {
+        if (!powerup || powerup.died || !powerup.loc) continue;
+
+        const pulse = highQuality ? Math.abs(Math.sin(timeSeconds * 5)) * 3 : 0;
+        const x = powerup.loc.X;
+        const y = powerup.loc.Y;
+
+        ctx.fillStyle = 'gold';
+        ctx.beginPath();
+        ctx.arc(x, y, 8 + pulse, 0, Math.PI * 2);
+        ctx.fill();
+
+        if (highQuality) {
+            ctx.fillStyle = 'yellow';
+            ctx.beginPath();
+            ctx.arc(x, y, 4, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+}
+
+/** Draws all visible snakes and returns the current player's head. */
+function drawSnakes(ctx, snakes, playerId, playerSkinIndex, showDeath) {
+    let playerHead = null;
+
+    for (const snake of snakes) {
+        if (!snake || snake.dc === true || snake.alive !== true) continue;
+        if (snake.snake === playerId && showDeath) continue;
+        if (!Array.isArray(snake.body) || snake.body.length < 2) continue;
+
+        const skin = resolveSnakeSkin(snake, playerId, playerSkinIndex);
+        drawSnakeBody(ctx, snake.body, skin);
+        drawNameplate(ctx, snake);
+
+        if (snake.snake === playerId) {
+            const head = snake.body[snake.body.length - 1];
+            playerHead = { x: head.X, y: head.Y };
+        }
+    }
+
+    return playerHead;
+}
+
+/** Resolves a snake's appearance using the local player's selected skin when needed. */
+function resolveSnakeSkin(snake, playerId, playerSkinIndex) {
+    const skinIndex = snake.snake === playerId ? playerSkinIndex : snake.skin;
+    return resolveSkin(skinIndex);
+}
+
+/** Resolves a skin from the catalog or falls back to the default skin. */
+function resolveSkin(index) {
+    if (Number.isInteger(index) && index >= 0 && index < skinCatalog.length) {
+        return skinCatalog[index];
+    }
+    return skinCatalog[0] || DEFAULT_SKIN;
+}
+
+/** Draws a complete snake with outline, fill, pattern, highlight, and head. */
+function drawSnakeBody(ctx, body, skin) {
+    if (!Array.isArray(body) || body.length < 2) return;
+
+    const outlineColor = skin.outlineColor || 'rgba(0,0,0,0.35)';
+
+    ctx.save();
+
+    ctx.strokeStyle = outlineColor;
+    ctx.lineWidth = SNAKE_WIDTH + 4;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    traceBodyPath(ctx, body);
+    ctx.stroke();
+
+    ctx.strokeStyle = skin.bodyColor;
+    ctx.lineWidth = SNAKE_WIDTH;
+    traceBodyPath(ctx, body);
+    ctx.stroke();
+
+    if (skin.bodyAccent && skin.pattern !== BODY_PATTERN.SOLID) {
+        if (skin.pattern === BODY_PATTERN.STRIPE) {
+            drawStripePattern(ctx, body, skin);
+        }
+        else {
+            drawPerpendicularPattern(ctx, body, skin);
+        }
+    }
+
+    if (skin.bellyColor) {
+        ctx.globalAlpha = 0.35;
+        ctx.strokeStyle = skin.bellyColor;
+        ctx.lineWidth = 3;
+        traceBodyPath(ctx, body);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+    }
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+    ctx.lineWidth = 2;
+    traceBodyPath(ctx, body);
+    ctx.stroke();
+
+    drawHead(ctx, body, skin);
+    ctx.restore();
+}
+
+/** Traces the snake body path. */
+function traceBodyPath(ctx, body) {
+    ctx.beginPath();
+    ctx.moveTo(body[0].X, body[0].Y);
+    for (let i = 1; i < body.length; i++) {
+        ctx.lineTo(body[i].X, body[i].Y);
+    }
+}
+
+/** Draws the head and eyes. */
+function drawHead(ctx, body, skin) {
+    const head = body[body.length - 1];
+    const neck = body[body.length - 2];
+    const headAngle = Math.atan2(head.Y - neck.Y, head.X - neck.X);
+    const headRadius = SNAKE_WIDTH * 0.7;
+
+    ctx.save();
+    ctx.translate(head.X, head.Y);
+    ctx.rotate(headAngle);
+
+    ctx.fillStyle = skin.headColor;
+    ctx.beginPath();
+    ctx.arc(1, 0, headRadius, 0, Math.PI * 2);
+    ctx.fill();
+
+    const eyeOffset = headRadius * 0.45;
+    const eyeRadius = headRadius * 0.42;
+    const pupilRadius = headRadius * 0.22;
+    const eyeForward = headRadius * 0.35;
+
+    ctx.fillStyle = skin.eyeColor;
+    ctx.beginPath();
+    ctx.arc(eyeForward, -eyeOffset, eyeRadius, 0, Math.PI * 2);
+    ctx.arc(eyeForward, eyeOffset, eyeRadius, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = skin.pupilColor;
+    ctx.beginPath();
+    ctx.arc(eyeForward + pupilRadius * 0.3, -eyeOffset, pupilRadius, 0, Math.PI * 2);
+    ctx.arc(eyeForward + pupilRadius * 0.3, eyeOffset, pupilRadius, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+}
+
+/** Draws alternating stripe bands along the body. */
+function drawStripePattern(ctx, body, skin) {
+    const band = 10;
+    ctx.save();
+    ctx.lineWidth = SNAKE_WIDTH;
+    ctx.lineCap = 'butt';
+    ctx.lineJoin = 'round';
+
+    ctx.strokeStyle = skin.bodyAccent;
+    ctx.setLineDash(skin.bodyAccent2 ? [band, 2 * band] : [band, band]);
+    ctx.lineDashOffset = skin.bodyAccent2 ? 2 * band : band;
+    traceBodyPath(ctx, body);
+    ctx.stroke();
+
+    if (skin.bodyAccent2) {
+        ctx.strokeStyle = skin.bodyAccent2;
+        ctx.setLineDash([band, 2 * band]);
+        ctx.lineDashOffset = band;
+        traceBodyPath(ctx, body);
+        ctx.stroke();
+    }
+
+    ctx.setLineDash([]);
+    ctx.restore();
+}
+
+/** Draws checker, diamond, or wave marks perpendicular to the body path. */
+function drawPerpendicularPattern(ctx, body, skin) {
+    const spacing = skin.pattern === BODY_PATTERN.CHECKER ? 12
+        : skin.pattern === BODY_PATTERN.DIAMOND ? 18
+            : 10;
+
+    let alternate = false;
+    forEachSampleAlongBody(body, spacing, (x, y, nx, ny) => {
+        if (skin.pattern === BODY_PATTERN.CHECKER) {
+            const accent = alternate && skin.bodyAccent2 ? skin.bodyAccent2 : skin.bodyAccent;
+            ctx.fillStyle = accent;
+            ctx.beginPath();
+            ctx.arc(x + nx * 2.6, y + ny * 2.6, 2.2, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        else if (skin.pattern === BODY_PATTERN.DIAMOND) {
+            const accent = alternate && skin.bodyAccent2 ? skin.bodyAccent2 : skin.bodyAccent;
+            ctx.fillStyle = accent;
+            ctx.beginPath();
+            ctx.moveTo(x, y - 3);
+            ctx.lineTo(x + 3, y);
+            ctx.lineTo(x, y + 3);
+            ctx.lineTo(x - 3, y);
+            ctx.closePath();
+            ctx.fill();
+        }
+        else if (skin.pattern === BODY_PATTERN.WAVE) {
+            const accent = alternate && skin.bodyAccent2 ? skin.bodyAccent2 : skin.bodyAccent;
+            ctx.strokeStyle = accent;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(x - nx * 3, y - ny * 3);
+            ctx.quadraticCurveTo(x + ny * 3, y - nx * 3, x + nx * 3, y + ny * 3);
+            ctx.stroke();
+        }
+        alternate = !alternate;
+    });
+}
+
+/** Iterates evenly spaced sample points along the snake body. */
+function forEachSampleAlongBody(body, spacing, visitor) {
+    let carry = 0;
+    for (let i = 1; i < body.length; i++) {
+        const start = body[i - 1];
+        const end = body[i];
+        const dx = end.X - start.X;
+        const dy = end.Y - start.Y;
+        const len = Math.hypot(dx, dy);
+        if (len < 0.001) continue;
+
+        const dirX = dx / len;
+        const dirY = dy / len;
+        const nx = -dirY;
+        const ny = dirX;
+
+        let walked = spacing - carry;
+        while (walked <= len) {
+            visitor(start.X + dirX * walked, start.Y + dirY * walked, nx, ny);
+            walked += spacing;
+        }
+
+        carry = len - (walked - spacing);
+        if (carry >= spacing) carry = 0;
+    }
+}
+
+/** Draws a floating name and score pill above the head. */
+function drawNameplate(ctx, snake) {
+    if (!snake.name || !Array.isArray(snake.body) || snake.body.length < 2) return;
+
+    const head = snake.body[snake.body.length - 1];
+    const fullText = `${snake.name}  ${snake.score ?? 0}`;
+
+    ctx.save();
+    ctx.font = "700 11px 'Avenir Next', 'Segoe UI', sans-serif";
+    const textWidth = ctx.measureText(fullText).width;
+    const padX = 8;
+    const pillH = 18;
+    const pillW = textWidth + padX * 2;
+    const radius = pillH / 2;
+    const pillX = head.X - pillW / 2;
+    const pillY = head.Y - (SNAKE_WIDTH / 2 + 2) - pillH - 6;
+
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    roundRect(ctx, pillX + 1, pillY + 1, pillW, pillH, radius);
+    ctx.fill();
+
+    ctx.fillStyle = 'rgba(0,0,0,0.65)';
+    roundRect(ctx, pillX, pillY, pillW, pillH, radius);
+    ctx.fill();
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+    ctx.lineWidth = 1;
+    roundRect(ctx, pillX, pillY, pillW, pillH, radius);
+    ctx.stroke();
+
+    ctx.fillStyle = 'rgba(255,255,255,0.95)';
+    ctx.textAlign = 'center';
+    ctx.fillText(fullText, head.X, pillY + pillH / 2 + 4);
+    ctx.restore();
+}
+
+/** Draws a rounded rectangle path. */
+function roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.arc(x + w - r, y + r, r, -Math.PI / 2, 0);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.arc(x + w - r, y + h - r, r, 0, Math.PI / 2);
+    ctx.lineTo(x + r, y + h);
+    ctx.arc(x + r, y + h - r, r, Math.PI / 2, Math.PI);
+    ctx.lineTo(x, y + r);
+    ctx.arc(x + r, y + r, r, Math.PI, Math.PI * 1.5);
+}
+
+/** Computes a wall's axis-aligned rectangle. */
+function wallRect(wall) {
+    if (!wall?.p1 || !wall?.p2) return null;
+    let x = Math.min(wall.p1.X, wall.p2.X) - WALL_HALF_WIDTH;
+    let y = Math.min(wall.p1.Y, wall.p2.Y) - WALL_HALF_WIDTH;
+    let w = Math.abs(wall.p1.X - wall.p2.X);
+    let h = Math.abs(wall.p1.Y - wall.p2.Y);
+    if (w === 0) {
+        w = WALL_THICKNESS;
+        h += WALL_THICKNESS;
+    }
+    else {
+        h = WALL_THICKNESS;
+        w += WALL_THICKNESS;
+    }
+    return { x, y, w, h };
+}
+
+/** Computes a single-player scoreboard dither radius. */
+function computeDitherForHead(head, sbLeft, sbTop, sbRight, sbBottom) {
+    if (!head) return -1;
+
+    const fadeDistance = 80;
+    const nearX = clamp(head.x, sbLeft, sbRight);
+    const nearY = clamp(head.y, sbTop, sbBottom);
+    const dx = head.x - nearX;
+    const dy = head.y - nearY;
+    const dist = Math.hypot(dx, dy);
+
+    if (dist >= fadeDistance) return -1;
+
+    const tLinear = 1 - dist / fadeDistance;
+    const t = tLinear * tLinear;
+    const ditherHalf = 2.5;
+    const ditherMin = ditherHalf * 0.4;
+    const ditherMax = ditherHalf * 2;
+    return ditherMax - t * (ditherMax - ditherMin);
+}
+
+/** Computes split-screen scoreboard dither radii. */
+function computeSplitDitherRadii(viewWidth, p1Head, p2Head, p1Dead, p2Dead) {
+    const centerX = viewWidth / 2;
+    const sbW = 212;
+    const sbH = 180;
+    const sbLeft = centerX - sbW / 2;
+    const sbTop = 36;
+    const sbRight = centerX + sbW / 2;
+    const sbBottom = sbTop + sbH;
+
+    return {
+        leftR: p1Dead ? -1 : computeDitherForHead(p1Head, sbLeft, sbTop, centerX, sbBottom),
+        rightR: p2Dead ? -1 : computeDitherForHead(p2Head, centerX, sbTop, sbRight, sbBottom)
+    };
+}
+
+/** Clamps a value between a minimum and maximum bound. */
+function clamp(value, min, max) {
+    return Math.min(Math.max(value, min), max);
 }
 
 /**

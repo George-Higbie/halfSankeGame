@@ -26,6 +26,9 @@ namespace GUI.Components.Controllers
         /// </summary>
         public sealed class RenderSnapshot
         {
+            /// <summary>Monotonic state version captured when the snapshot was built.</summary>
+            public int Version { get; init; }
+
             /// <summary>The server-assigned player ID captured in this snapshot.</summary>
             public int? PlayerId { get; init; }
 
@@ -139,6 +142,7 @@ namespace GUI.Components.Controllers
                 var playerId = PlayerId;
                 var snapshot = new RenderSnapshot
                 {
+                    Version = currentVersion,
                     PlayerId = playerId,
                     WorldSize = WorldSize,
                     Snakes = snakes,

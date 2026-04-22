@@ -8,10 +8,12 @@
 @using Blazor.Extensions
 @using Blazor.Extensions.Canvas
 @using Blazor.Extensions.Canvas.Canvas2D
+@using Microsoft.AspNetCore.Components.Web
 @using System.Diagnostics
 @using GUI.Components.Controllers
 @using GUI.Components.Models
 @using GUI.Components.Rendering
+@using GUI.Components.Shared
 @using System.Linq
 @inject IJSRuntime JsRuntime;
 @inject GameController GameController
@@ -146,7 +148,7 @@ else
 
 @* ── Canvas ── *@
 <div id="snakeCanvas" style="position:fixed; inset:0; z-index:1; background:#7c9c45; overflow:hidden;">
-    <BECanvas Width="1920" Height="1080" @ref="_canvasReference"></BECanvas>
+    <canvas id="snakeGameCanvas" width="1920" height="1080" style="width:100%; height:100%; display:block;" aria-label="Snake game canvas"></canvas>
 </div>
 
 @* ── Scoreboard Overlay ── *@
@@ -223,12 +225,6 @@ else
     /// <summary>Canvas renderer responsible for all drawing operations.</summary>
     private readonly SnakeRenderer _renderer = new();
 
-    /// <summary>Blazor reference to the main game canvas element.</summary>
-    private BECanvasComponent? _canvasReference;
-
-    /// <summary>2D drawing context for the main game canvas.</summary>
-    private Canvas2DContext? _context;
-
     /// <summary>Blazor reference to the P1 skin-preview mini canvas.</summary>
     private BECanvasComponent? _p1PreviewRef;
 
@@ -250,9 +246,6 @@ else
     /// <summary>Token source for cancelling the render loop on dispose.</summary>
     private CancellationTokenSource? _renderCts;
 
-    /// <summary>High-resolution timer for delta-time calculations.</summary>
-    private readonly Stopwatch _frameStopwatch = new();
-
     /// <summary>Current viewport width in CSS pixels.</summary>
     private int _viewW = 1920;
 
@@ -260,9 +253,6 @@ else
     private int _viewH = 1080;
 
     // P1 per-player state (uses DI-injected controllers)
-
-    /// <summary>Active death-explosion animations keyed by snake ID.</summary>
-    private readonly Dictionary<int, SnakeRenderer.DeathAnim> _p1DeathAnims = new();
 
     /// <summary>Whether the P1 death overlay is displayed.</summary>
     private bool _showDeathScreen;
@@ -291,9 +281,6 @@ else
     /// <summary>Set to true once the server sends P1's first body, enabling input.</summary>
     private volatile bool _p1Ready;
 
-    /// <summary>Smooth-camera tracking state for the P1 viewport.</summary>
-    private readonly SnakeRenderer.CameraState _p1Cam = new();
-
     // P2 per-player state (manually created controllers)
 
     /// <summary>Network controller for the second player (created at runtime, not via DI).</summary>
@@ -301,9 +288,6 @@ else
 
     /// <summary>Game controller for the second player (created at runtime, not via DI).</summary>
     private GameController? _p2Game;
-
-    /// <summary>Active death-explosion animations for P2 keyed by snake ID.</summary>
-    private readonly Dictionary<int, SnakeRenderer.DeathAnim> _p2DeathAnims = new();
 
     /// <summary>Whether the P2 death overlay is displayed.</summary>
     private bool _p2ShowDeath;
@@ -329,20 +313,8 @@ else
     /// <summary>Set to true once the server sends P2's first body, enabling input.</summary>
     private volatile bool _p2Ready;
 
-    /// <summary>Smooth-camera tracking state for the P2 viewport.</summary>
-    private readonly SnakeRenderer.CameraState _p2Cam = new();
-
-    /// <summary>P1 head screen-space X for scoreboard dither calculation.</summary>
-    private double _p1HeadScreenX;
-
-    /// <summary>P1 head screen-space Y for scoreboard dither calculation.</summary>
-    private double _p1HeadScreenY;
-
-    /// <summary>P2 head screen-space X for scoreboard dither calculation.</summary>
-    private double _p2HeadScreenX;
-
-    /// <summary>P2 head screen-space Y for scoreboard dither calculation.</summary>
-    private double _p2HeadScreenY;
+    /// <summary>Hash of the last browser render state pushed to JS.</summary>
+    private int _lastBrowserRenderStateKey = int.MinValue;
 
     // ==================== UI State ====================
 
@@ -444,58 +416,6 @@ else
         ["up"] = "down", ["down"] = "up", ["left"] = "right", ["right"] = "left"
     };
 
-    /// <summary>Dither cell grid size in pixels.</summary>
-    private const double DitherCell = 5.0;
-
-    /// <summary>Half the dither cell size (radius baseline).</summary>
-    private const double DitherHalf = DitherCell / 2.0;
-
-    /// <summary>Maximum dither star radius (overflows cell, clips to solid).</summary>
-    private const double DitherMaxR = DitherHalf * 2.0;
-
-    /// <summary>Minimum dither star radius (always-visible dots).</summary>
-    private const double DitherMinR = DitherHalf * 0.40;
-
-    /// <summary>Computes a dither star radius for a single head position relative to a scoreboard rectangle.</summary>
-    private double ComputeDitherForHead(double headX, double headY, double sbLeft, double sbTop, double sbRight, double sbBottom)
-    {
-        const double fadeDistance = 80.0;
-        double nearX = Math.Clamp(headX, sbLeft, sbRight);
-        double nearY = Math.Clamp(headY, sbTop, sbBottom);
-        double dx = headX - nearX;
-        double dy = headY - nearY;
-        double dist = Math.Sqrt(dx * dx + dy * dy);
-
-        if (dist >= fadeDistance) return -1;
-
-        double tLinear = 1.0 - dist / fadeDistance;
-        double t = tLinear * tLinear;
-        return DitherMaxR - t * (DitherMaxR - DitherMinR);
-    }
-
-    /// <summary>Computes dither radius for single-player mode (full scoreboard).</summary>
-    private double ComputeDitherRadius()
-    {
-        if (_showDeathScreen) return -1;
-        return ComputeDitherForHead(_p1HeadScreenX, _p1HeadScreenY, 12, 12, 12 + 212, 12 + 180);
-    }
-
-    /// <summary>Computes per-half dither radii for split-screen mode. Left half reacts to P1, right half to P2.</summary>
-    private (double leftR, double rightR) ComputeSplitDitherRadii()
-    {
-        // Scoreboard is centered at 50vw; approximate pixel bounds
-        double centerX = _viewW / 2.0;
-        double sbW = 212, sbH = 180;
-        double sbLeft = centerX - sbW / 2.0;
-        double sbTop = 36;
-        double sbRight = centerX + sbW / 2.0;
-        double sbBottom = sbTop + sbH;
-
-        double leftR = _showDeathScreen ? -1 : ComputeDitherForHead(_p1HeadScreenX, _p1HeadScreenY, sbLeft, sbTop, centerX, sbBottom);
-        double rightR = _p2ShowDeath ? -1 : ComputeDitherForHead(_p2HeadScreenX, _p2HeadScreenY, centerX, sbTop, sbRight, sbBottom);
-        return (leftR, rightR);
-    }
-
     // ==================== Lifecycle ====================
 
     /// <summary>Initializes canvases, JS interop, P2 controllers, and starts the render loop.</summary>
@@ -508,7 +428,7 @@ else
         _p2Game = new GameController(_p2Network, ScoreDatabase);
 
         await JsRuntime.InvokeAsync<IJSObjectReference>("import", "./Components/Pages/SnakeGUI.razor.js");
-        _context = await _canvasReference!.CreateCanvas2DAsync();
+        await JsRuntime.InvokeVoidAsync("setSnakeSkinCatalog", SnakeSkin.AllSkins);
         await JsRuntime.InvokeAsync<object>("initRenderJS", DotNetObjectReference.Create(this));
 
         _renderCts = new CancellationTokenSource();
@@ -960,7 +880,6 @@ else
             lock (_p1MoveLock) _p1MoveQueue.Clear();
             _p1LastSentDir = null;
             _p1Ready = false;
-            _p1Cam.Reset();
             if (_splitScreen) _p1SidebarOpen = false;
             else _sidebarOpen = false;
             _renderer.ClearWallCache(GameController);
@@ -973,7 +892,6 @@ else
             lock (_p2MoveLock) _p2MoveQueue.Clear();
             _p2LastSentDir = null;
             _p2Ready = false;
-            _p2Cam.Reset();
             _renderer.ClearWallCache(_p2Game);
             _p2SidebarOpen = false;
             _p2Game.Disconnect();
@@ -1112,7 +1030,7 @@ else
         _showDeathScreen = true;
         _status = "Game Over";
 
-        var player = GameController.GetPlayerSnake();
+        var player = GameController.GetRenderSnapshot().PlayerSnake;
         if (player?.Body?.Count > 0)
         {
             var head = player.Body[^1];
@@ -1130,7 +1048,7 @@ else
         _p2ShowDeath = true;
         _p2Status = "Game Over";
 
-        var player = _p2Game?.GetPlayerSnake();
+        var player = _p2Game?.GetRenderSnapshot().PlayerSnake;
         if (player?.Body?.Count > 0)
         {
             var head = player.Body[^1];
@@ -1144,13 +1062,12 @@ else
     // ==================== Render Loop ====================
 
     /// <summary>
-    /// Main render loop running at ~60 FPS. Each tick dequeues buffered moves
-    /// (respecting the 3-frame cooldown), draws the frame, and triggers
-    /// periodic Blazor UI updates.
+    /// Main gameplay loop running at ~60 FPS. Each tick dequeues buffered moves,
+    /// publishes the latest render state to the browser-side canvas renderer,
+    /// updates preview canvases, and triggers periodic Blazor UI refreshes.
     /// </summary>
     private async Task RenderLoopAsync(CancellationToken ct)
     {
-        _frameStopwatch.Start();
         int tick = 0;
         var frameSw = new Stopwatch();
         try
@@ -1183,9 +1100,10 @@ else
                         }
                     }
 
-                    await DrawFrame();
+                    await PublishBrowserRenderStateAsync(p1Snapshot, p2Snapshot);
+                    await RefreshSkinPreviewsAsync();
 
-                    // Mark players ready once their snake has been rendered
+                    // Mark players ready once the first player body arrives.
                     if (!_p1Ready && p1Snapshot.PlayerSnake?.Body?.Count > 0)
                         _p1Ready = true;
                     if (!_p2Ready && p2Snapshot?.PlayerSnake?.Body?.Count > 0)
@@ -1203,91 +1121,98 @@ else
         catch (TaskCanceledException) { }
     }
 
-    // ==================== Drawing ====================
+    // ==================== Browser Rendering ====================
 
     /// <summary>
-    /// Draws a single frame: clears the canvas, renders viewports (single or split),
-    /// updates skin previews, and pushes the dither mask to JS.
+    /// Publishes the latest world state and rendering options to the browser-side
+    /// canvas renderer when the effective render state changes.
     /// </summary>
-    private async Task DrawFrame()
+    private async Task PublishBrowserRenderStateAsync(GameController.RenderSnapshot p1Snapshot, GameController.RenderSnapshot? p2Snapshot)
     {
-        if (_context == null) return;
-
-        var elapsed = _frameStopwatch.Elapsed.TotalSeconds;
-        _frameStopwatch.Restart();
-
-        await _context.BeginBatchAsync();
-        await _context.SetFillStyleAsync(_highQualityTextures ? "#7c9c45" : "#e8f5ff");
-        await _context.FillRectAsync(0, 0, _viewW, _viewH);
-
-        if (_splitScreen && _p2Game != null)
+        if (_centerTargetSnakeId.HasValue && !p1Snapshot.Snakes.Any(s => s.Id == _centerTargetSnakeId.Value))
         {
-            var p1Snapshot = GameController.GetRenderSnapshot();
-            var p2Snapshot = _p2Game.GetRenderSnapshot();
-            var halfW = _viewW / 2;
-
-            // Resolve P1 center target
-            if (_centerTargetSnakeId.HasValue)
-            {
-                if (!p1Snapshot.Snakes.Any(s => s.Id == _centerTargetSnakeId.Value))
-                    _centerTargetSnakeId = null;
-            }
-
-            // Left viewport — P1 (WASD)
-            var p1Head = await _renderer.DrawViewport(_context, GameController, _p1DeathAnims, _showDeathScreen,
-                _frozenCameraX, _frozenCameraY, _centerTargetSnakeId,
-                0, 0, halfW, _viewH, elapsed, _p1Cam, SnakeSkin.AllSkins[_p1SkinIndex], _drawGrid, _highQualityTextures);
-            if (p1Head.HasValue) { _p1HeadScreenX = p1Head.Value.headX; _p1HeadScreenY = p1Head.Value.headY; }
-
-            // Right viewport — P2 (Arrows)
-            var p2Head = await _renderer.DrawViewport(_context, _p2Game, _p2DeathAnims, _p2ShowDeath,
-                _p2FrozenCamX, _p2FrozenCamY, null,
-                halfW, 0, halfW, _viewH, elapsed, _p2Cam, SnakeSkin.AllSkins[_p2SkinIndex], _drawGrid, _highQualityTextures);
-            if (p2Head.HasValue) { _p2HeadScreenX = p2Head.Value.headX; _p2HeadScreenY = p2Head.Value.headY; }
-
-            // Divider line
-            await _context.SetStrokeStyleAsync("rgba(255,255,255,0.4)");
-            await _context.SetLineWidthAsync(2);
-            await _context.BeginPathAsync();
-            await _context.MoveToAsync(halfW, 0);
-            await _context.LineToAsync(halfW, _viewH);
-            await _context.StrokeAsync();
-
-            // Player labels (centered in each viewport half)
-            await _context.SetFillStyleAsync("rgba(255,255,255,0.5)");
-            await _context.SetFontAsync("bold 16px Arial");
-            await _context.SetTextAlignAsync(TextAlign.Center);
-            await _context.FillTextAsync("P1 (WASD)", halfW / 2, 24);
-            await _context.FillTextAsync("P2 (Arrows)", halfW + halfW / 2, 24);
-            await _context.SetTextAlignAsync(TextAlign.Start);
-        }
-        else
-        {
-            var p1Snapshot = GameController.GetRenderSnapshot();
-
-            // Resolve center target
-            if (_centerTargetSnakeId.HasValue)
-            {
-                if (!p1Snapshot.Snakes.Any(s => s.Id == _centerTargetSnakeId.Value))
-                    _centerTargetSnakeId = null;
-            }
-
-            var p1Head = await _renderer.DrawViewport(_context, GameController, _p1DeathAnims, _showDeathScreen,
-                _frozenCameraX, _frozenCameraY, _centerTargetSnakeId,
-                0, 0, _viewW, _viewH, elapsed, _p1Cam, SnakeSkin.AllSkins[_p1SkinIndex], _drawGrid, _highQualityTextures);
-            if (p1Head.HasValue) { _p1HeadScreenX = p1Head.Value.headX; _p1HeadScreenY = p1Head.Value.headY; }
+            _centerTargetSnakeId = null;
         }
 
-        await _context.EndBatchAsync();
+        var renderKeyBuilder = new HashCode();
+        renderKeyBuilder.Add(_viewW);
+        renderKeyBuilder.Add(_viewH);
+        renderKeyBuilder.Add(_splitScreen);
+        renderKeyBuilder.Add(_drawGrid);
+        renderKeyBuilder.Add(_highQualityTextures);
+        renderKeyBuilder.Add(_showScoreboard);
+        renderKeyBuilder.Add(_showDeathScreen);
+        renderKeyBuilder.Add(_p2ShowDeath);
+        renderKeyBuilder.Add(_centerTargetSnakeId);
+        renderKeyBuilder.Add(_p1SkinIndex);
+        renderKeyBuilder.Add(_p2SkinIndex);
+        renderKeyBuilder.Add(_frozenCameraX);
+        renderKeyBuilder.Add(_frozenCameraY);
+        renderKeyBuilder.Add(_p2FrozenCamX);
+        renderKeyBuilder.Add(_p2FrozenCamY);
+        renderKeyBuilder.Add(p1Snapshot.Version);
+        renderKeyBuilder.Add(p2Snapshot?.Version ?? -1);
+        int renderKey = renderKeyBuilder.ToHashCode();
 
-        // Redraw skin previews when selection changes
+        if (renderKey == _lastBrowserRenderStateKey)
+        {
+            return;
+        }
+
+        _lastBrowserRenderStateKey = renderKey;
+
+        await JsRuntime.InvokeVoidAsync("setSnakeRenderState", new
+        {
+            viewW = _viewW,
+            viewH = _viewH,
+            splitScreen = _splitScreen,
+            drawGrid = _drawGrid,
+            highQualityTextures = _highQualityTextures,
+            showScoreboard = _showScoreboard && GameController.PlayerId.HasValue,
+            p1 = new
+            {
+                version = p1Snapshot.Version,
+                playerId = p1Snapshot.PlayerId,
+                worldSize = p1Snapshot.WorldSize ?? 2000,
+                playerSkinIndex = _p1SkinIndex,
+                showDeath = _showDeathScreen,
+                frozenCameraX = _frozenCameraX,
+                frozenCameraY = _frozenCameraY,
+                centerTargetSnakeId = _centerTargetSnakeId,
+                snakes = p1Snapshot.Snakes,
+                walls = p1Snapshot.Walls,
+                powerups = p1Snapshot.Powerups
+            },
+            p2 = _splitScreen && p2Snapshot != null
+                ? new
+                {
+                    version = p2Snapshot.Version,
+                    playerId = p2Snapshot.PlayerId,
+                    worldSize = p2Snapshot.WorldSize ?? 2000,
+                    playerSkinIndex = _p2SkinIndex,
+                    showDeath = _p2ShowDeath,
+                    frozenCameraX = _p2FrozenCamX,
+                    frozenCameraY = _p2FrozenCamY,
+                    centerTargetSnakeId = (int?)null,
+                    snakes = p2Snapshot.Snakes,
+                    walls = p2Snapshot.Walls,
+                    powerups = p2Snapshot.Powerups
+                }
+                : null
+        });
+    }
+
+    /// <summary>Refreshes the small skin-preview canvases when the selection changes.</summary>
+    private async Task RefreshSkinPreviewsAsync()
+    {
         if (_p1SkinIndex != _lastP1PreviewSkin)
         {
             _p1PreviewCtx ??= _p1PreviewRef != null ? await _p1PreviewRef.CreateCanvas2DAsync() : null;
             if (_p1PreviewCtx != null) { await _renderer.DrawSkinPreview(_p1PreviewCtx, SnakeSkin.AllSkins[_p1SkinIndex]); _lastP1PreviewSkin = _p1SkinIndex; }
         }
-        // Invalidate P2 preview when split-screen is (re-)enabled — the BECanvas DOM element
-        // is destroyed on toggle-off and recreated on toggle-on, making the old context stale.
+
+        // Invalidate P2 preview when split-screen is (re-)enabled because the BECanvas DOM
+        // element is destroyed on toggle-off and recreated on toggle-on.
         if (_splitScreen && !_wasSplitScreen)
         {
             _p2PreviewCtx = null;
@@ -1299,21 +1224,6 @@ else
         {
             _p2PreviewCtx = _p2PreviewRef != null ? await _p2PreviewRef.CreateCanvas2DAsync() : null;
             if (_p2PreviewCtx != null) { await _renderer.DrawSkinPreview(_p2PreviewCtx, SnakeSkin.AllSkins[_p2SkinIndex]); _lastP2PreviewSkin = _p2SkinIndex; }
-        }
-
-        // Update scoreboard dither mask every frame via JS (bypasses Blazor render cycle)
-        if (_showScoreboard && GameController.PlayerId.HasValue)
-        {
-            if (_splitScreen)
-            {
-                var (leftR, rightR) = ComputeSplitDitherRadii();
-                await JsRuntime.InvokeVoidAsync("updateScoreboardDither", leftR, rightR);
-            }
-            else
-            {
-                double ditherR = ComputeDitherRadius();
-                await JsRuntime.InvokeVoidAsync("updateScoreboardDither", ditherR, -1.0);
-            }
         }
     }
 }
