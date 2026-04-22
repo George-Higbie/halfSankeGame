@@ -117,6 +117,61 @@ const DEFAULT_SKIN = {
     deathColor: '#4caf50'
 };
 
+/**
+ * Reads a value from either camelCase or PascalCase property names.
+ * @param {Record<string, any>} obj - Source object.
+ * @param {string} camelKey - camelCase key.
+ * @param {string} pascalKey - PascalCase key.
+ * @returns {any}
+ */
+function readSkinProp(obj, camelKey, pascalKey) {
+    if (!obj || typeof obj !== 'object') return undefined;
+    if (obj[camelKey] !== undefined) return obj[camelKey];
+    return obj[pascalKey];
+}
+
+/**
+ * Normalizes enum values that may be numeric or string names.
+ * @param {any} rawPattern - Raw pattern value from .NET.
+ * @returns {number}
+ */
+function normalizeBodyPattern(rawPattern) {
+    if (Number.isInteger(rawPattern) && rawPattern >= BODY_PATTERN.SOLID && rawPattern <= BODY_PATTERN.WAVE) {
+        return rawPattern;
+    }
+
+    if (typeof rawPattern === 'string') {
+        const key = rawPattern.toUpperCase();
+        if (BODY_PATTERN[key] !== undefined) {
+            return BODY_PATTERN[key];
+        }
+    }
+
+    return BODY_PATTERN.SOLID;
+}
+
+/**
+ * Converts a .NET skin object to the JS renderer shape.
+ * @param {any} skin - Raw serialized skin object.
+ * @returns {any}
+ */
+function normalizeSkin(skin) {
+    const normalized = {
+        bodyColor: readSkinProp(skin, 'bodyColor', 'BodyColor') ?? DEFAULT_SKIN.bodyColor,
+        bodyAccent: readSkinProp(skin, 'bodyAccent', 'BodyAccent') ?? DEFAULT_SKIN.bodyAccent,
+        bodyAccent2: readSkinProp(skin, 'bodyAccent2', 'BodyAccent2') ?? DEFAULT_SKIN.bodyAccent2,
+        pattern: normalizeBodyPattern(readSkinProp(skin, 'pattern', 'Pattern')),
+        bellyColor: readSkinProp(skin, 'bellyColor', 'BellyColor') ?? DEFAULT_SKIN.bellyColor,
+        outlineColor: readSkinProp(skin, 'outlineColor', 'OutlineColor') ?? DEFAULT_SKIN.outlineColor,
+        headColor: readSkinProp(skin, 'headColor', 'HeadColor') ?? DEFAULT_SKIN.headColor,
+        eyeColor: readSkinProp(skin, 'eyeColor', 'EyeColor') ?? DEFAULT_SKIN.eyeColor,
+        pupilColor: readSkinProp(skin, 'pupilColor', 'PupilColor') ?? DEFAULT_SKIN.pupilColor,
+        deathColor: readSkinProp(skin, 'deathColor', 'DeathColor') ?? DEFAULT_SKIN.deathColor
+    };
+
+    return normalized;
+}
+
 const viewportFxStates = {
     p1: createViewportFxState(),
     p2: createViewportFxState()
@@ -258,7 +313,12 @@ window.updateScoreboardDither = (leftR, rightR, forceSplit = false) => {
  * @param {Array<any>} skins - The available snake skins.
  */
 window.setSnakeSkinCatalog = (skins) => {
-    skinCatalog = Array.isArray(skins) ? skins : [];
+    if (!Array.isArray(skins)) {
+        skinCatalog = [];
+        return;
+    }
+
+    skinCatalog = skins.map((skin) => normalizeSkin(skin));
 };
 
 /**
@@ -874,10 +934,10 @@ function drawViewport(ctx, state, viewport, vx, vy, vw, vh, dt, timeSeconds, cam
         drawGrid(ctx, worldSize);
     }
 
-    drawDeathAnimations(ctx, snakes, playerId, viewport.playerSkinIndex, fxState, dt);
+    drawDeathAnimations(ctx, snakes, playerId, viewport.playerSkinIndex, viewport.playerSkin, fxState, dt);
     drawWalls(ctx, viewport.walls || [], state.highQualityTextures, fxState);
     drawPowerups(ctx, viewport.powerups || [], state.highQualityTextures, timeSeconds, fxState);
-    const head = drawSnakes(ctx, snakes, playerId, viewport.playerSkinIndex, viewport.showDeath, fxState);
+    const head = drawSnakes(ctx, snakes, playerId, viewport.playerSkinIndex, viewport.playerSkin, viewport.showDeath, fxState);
 
     ctx.restore();
     return head ? { x: head.x + camX, y: head.y + camY } : null;
@@ -1038,7 +1098,7 @@ function drawPowerups(ctx, powerups, highQuality, timeSeconds, fxState) {
 }
 
 /** Draws all visible snakes and returns the current player's head. */
-function drawSnakes(ctx, snakes, playerId, playerSkinIndex, showDeath, fxState) {
+function drawSnakes(ctx, snakes, playerId, playerSkinIndex, playerSkin, showDeath, fxState) {
     let playerHead = null;
 
     for (const snake of snakes) {
@@ -1047,7 +1107,7 @@ function drawSnakes(ctx, snakes, playerId, playerSkinIndex, showDeath, fxState) 
         if (snake.snake === playerId && showDeath) continue;
         if (!Array.isArray(snake.body) || snake.body.length < 2) continue;
 
-        const skin = resolveSnakeSkin(snake, playerId, playerSkinIndex);
+        const skin = resolveSnakeSkin(snake, playerId, playerSkinIndex, playerSkin);
         drawSnakeBody(ctx, snake.body, skin);
         drawNameplate(ctx, snake);
 
@@ -1061,15 +1121,23 @@ function drawSnakes(ctx, snakes, playerId, playerSkinIndex, showDeath, fxState) 
 }
 
 /** Resolves a snake's appearance using the local player's selected skin when needed. */
-function resolveSnakeSkin(snake, playerId, playerSkinIndex) {
+function resolveSnakeSkin(snake, playerId, playerSkinIndex, playerSkin) {
+    if (snake.snake === playerId) {
+        const explicitPlayerSkin = normalizeSkin(playerSkin);
+        if (explicitPlayerSkin) {
+            return explicitPlayerSkin;
+        }
+    }
+
     const skinIndex = snake.snake === playerId ? playerSkinIndex : snake.skin;
     return resolveSkin(skinIndex);
 }
 
 /** Resolves a skin from the catalog or falls back to the default skin. */
 function resolveSkin(index) {
-    if (Number.isInteger(index) && index >= 0 && index < skinCatalog.length) {
-        return skinCatalog[index];
+    const numericIndex = Number(index);
+    if (Number.isInteger(numericIndex) && numericIndex >= 0 && numericIndex < skinCatalog.length) {
+        return skinCatalog[numericIndex];
     }
     return skinCatalog[0] || DEFAULT_SKIN;
 }
@@ -1327,7 +1395,7 @@ function drawPatternMark(ctx, skin, px, py, nx, ny, dx, dy, index) {
 }
 
 /** Draws active death animations and spawns them when snakes die. */
-function drawDeathAnimations(ctx, snakes, playerId, playerSkinIndex, fxState, dt) {
+function drawDeathAnimations(ctx, snakes, playerId, playerSkinIndex, playerSkin, fxState, dt) {
     for (const snake of snakes) {
         const snakeId = snake?.snake;
         if (snakeId == null) continue;
@@ -1338,7 +1406,7 @@ function drawDeathAnimations(ctx, snakes, playerId, playerSkinIndex, fxState, dt
                 fxState.deathAnims.set(snakeId, {
                     elapsedSeconds: 0,
                     path: snake.body.map((point) => ({ X: point.X, Y: point.Y })),
-                    skin: resolveSnakeSkin(snake, playerId, playerSkinIndex),
+                    skin: resolveSnakeSkin(snake, playerId, playerSkinIndex, playerSkin),
                     isFinished: false
                 });
             }
@@ -1703,7 +1771,7 @@ const p2JsMoveBuffer = { queue: [], pendingBuffered180: null, lastSentDir: null,
  * Safety bound to avoid indefinite ack lock if a move is dropped/rejected upstream.
  * Keep this short so buffered chains progress as soon as moves become legal.
  */
-const JS_ACK_TIMEOUT_FRAMES = 12;
+const JS_ACK_TIMEOUT_FRAMES = 6;
 
 /**
  * Max spacing between opposite + intermediary keys for a buffered 180 chain.
