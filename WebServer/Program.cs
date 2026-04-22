@@ -1,6 +1,7 @@
 ﻿using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Text.Json;
 using MySql.Data.MySqlClient;
 
 const int defaultPort = 8080;
@@ -10,7 +11,7 @@ ScoreDataAccess.EnsureTablesExist();
 
 TcpListener listener = new(IPAddress.Any, port);
 listener.Start();
-Console.WriteLine($"WebServer listening on http://localhost:{port}");
+Console.WriteLine($"WebServer listening on http://0.0.0.0:{port}");
 
 while (true)
 {
@@ -30,11 +31,6 @@ static void HandleClient(TcpClient client)
 			return;
 		}
 
-		while (!string.IsNullOrEmpty(reader.ReadLine()))
-		{
-			// Consume headers.
-		}
-
 		string[] parts = requestLine.Split(' ');
 		if (parts.Length < 2)
 		{
@@ -44,15 +40,44 @@ static void HandleClient(TcpClient client)
 
 		string method = parts[0];
 		string target = parts[1];
-		if (!string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase))
+
+		Dictionary<string, string> headers = new(StringComparer.OrdinalIgnoreCase);
+		string? headerLine;
+		while (!string.IsNullOrEmpty(headerLine = reader.ReadLine()))
 		{
-			WriteResponse(stream, "405 Method Not Allowed", "<html><h3>Method Not Allowed</h3></html>");
-			return;
+			int sep = headerLine.IndexOf(':');
+			if (sep > 0)
+			{
+				string key = headerLine[..sep].Trim();
+				string value = headerLine[(sep + 1)..].Trim();
+				headers[key] = value;
+			}
+		}
+
+		string body = string.Empty;
+		if (headers.TryGetValue("Content-Length", out string? contentLengthValue)
+			&& int.TryParse(contentLengthValue, out int contentLength)
+			&& contentLength > 0)
+		{
+			char[] buffer = new char[contentLength];
+			int read = 0;
+			while (read < contentLength)
+			{
+				int chunk = reader.Read(buffer, read, contentLength - read);
+				if (chunk <= 0)
+				{
+					break;
+				}
+
+				read += chunk;
+			}
+
+			body = new string(buffer, 0, read);
 		}
 
 		try
 		{
-			RouteRequest(stream, target);
+			RouteRequest(stream, method, target, body);
 		}
 		catch
 		{
@@ -61,22 +86,121 @@ static void HandleClient(TcpClient client)
 	}
 }
 
-static void RouteRequest(NetworkStream stream, string target)
+static void RouteRequest(NetworkStream stream, string method, string target, string body)
 {
 	Uri uri = new($"http://localhost{target}");
 
-	if (uri.AbsolutePath == "/")
+	if (string.Equals(uri.AbsolutePath, "/api/health", StringComparison.OrdinalIgnoreCase)
+		&& string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase))
 	{
-		string body = "<html><h3>Welcome to the Snake Games Database!</h3><a href=\"/games\">View Games</a></html>";
-		WriteResponse(stream, "200 OK", body);
+		WriteJsonResponse(stream, "200 OK", new { ok = true });
 		return;
 	}
 
-	if (uri.AbsolutePath == "/games")
+	if (string.Equals(uri.AbsolutePath, "/api/games/open", StringComparison.OrdinalIgnoreCase)
+		&& string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase))
 	{
-		int? gameId = GetGameId(uri.Query);
-		string body = gameId.HasValue ? BuildSingleGamePage(gameId.Value) : BuildAllGamesPage();
-		WriteResponse(stream, "200 OK", body);
+		WriteJsonResponse(stream, "200 OK", ScoreDataAccess.GetOpenGameSessions());
+		return;
+	}
+
+	if (string.Equals(uri.AbsolutePath, "/api/games/start", StringComparison.OrdinalIgnoreCase)
+		&& string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase))
+	{
+		var payload = JsonSerializer.Deserialize<CreateGameRequest>(body);
+		if (payload == null)
+		{
+			WriteJsonResponse(stream, "400 Bad Request", new { error = "Invalid JSON payload." });
+			return;
+		}
+
+		int? gameId = ScoreDataAccess.CreateGame(payload.StartTime, payload.Host, payload.Port);
+		WriteJsonResponse(stream, "200 OK", new { gameId });
+		return;
+	}
+
+	if (string.Equals(uri.AbsolutePath, "/api/games/end", StringComparison.OrdinalIgnoreCase)
+		&& string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase))
+	{
+		var payload = JsonSerializer.Deserialize<SetGameEndRequest>(body);
+		if (payload == null)
+		{
+			WriteJsonResponse(stream, "400 Bad Request", new { error = "Invalid JSON payload." });
+			return;
+		}
+
+		ScoreDataAccess.SetGameEndTime(payload.GameId, payload.EndTime);
+		WriteJsonResponse(stream, "200 OK", new { ok = true });
+		return;
+	}
+
+	if (string.Equals(uri.AbsolutePath, "/api/players/upsert", StringComparison.OrdinalIgnoreCase)
+		&& string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase))
+	{
+		var payload = JsonSerializer.Deserialize<UpsertPlayerRequest>(body);
+		if (payload == null)
+		{
+			WriteJsonResponse(stream, "400 Bad Request", new { error = "Invalid JSON payload." });
+			return;
+		}
+
+		ScoreDataAccess.UpsertPlayer(payload.GameId, payload.PlayerId, payload.PlayerName, payload.MaxScore, payload.EnterTime);
+		WriteJsonResponse(stream, "200 OK", new { ok = true });
+		return;
+	}
+
+	if (string.Equals(uri.AbsolutePath, "/api/players/score", StringComparison.OrdinalIgnoreCase)
+		&& string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase))
+	{
+		var payload = JsonSerializer.Deserialize<UpdatePlayerScoreRequest>(body);
+		if (payload == null)
+		{
+			WriteJsonResponse(stream, "400 Bad Request", new { error = "Invalid JSON payload." });
+			return;
+		}
+
+		ScoreDataAccess.UpdatePlayerMaxScore(payload.GameId, payload.PlayerId, payload.MaxScore);
+		WriteJsonResponse(stream, "200 OK", new { ok = true });
+		return;
+	}
+
+	if (string.Equals(uri.AbsolutePath, "/api/players/leave", StringComparison.OrdinalIgnoreCase)
+		&& string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase))
+	{
+		var payload = JsonSerializer.Deserialize<SetPlayerLeaveRequest>(body);
+		if (payload == null)
+		{
+			WriteJsonResponse(stream, "400 Bad Request", new { error = "Invalid JSON payload." });
+			return;
+		}
+
+		ScoreDataAccess.SetPlayerLeaveTime(payload.GameId, payload.PlayerId, payload.LeaveTime);
+		WriteJsonResponse(stream, "200 OK", new { ok = true });
+		return;
+	}
+
+	if (string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase))
+	{
+		if (uri.AbsolutePath == "/")
+		{
+			string home = "<html><h3>Welcome to the Snake Games Database!</h3><a href=\"/games\">View Games</a></html>";
+			WriteResponse(stream, "200 OK", home);
+			return;
+		}
+
+		if (uri.AbsolutePath == "/games")
+		{
+			int? gameId = GetGameId(uri.Query);
+			string html = gameId.HasValue ? BuildSingleGamePage(gameId.Value) : BuildAllGamesPage();
+			WriteResponse(stream, "200 OK", html);
+			return;
+		}
+	}
+
+	if (!string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase)
+		&& !string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase))
+	{
+		WriteResponse(stream, "405 Method Not Allowed", "<html><h3>Method Not Allowed</h3></html>");
 		return;
 	}
 
@@ -144,6 +268,22 @@ static string BuildSingleGamePage(int gameId)
 	return html.ToString();
 }
 
+static void WriteJsonResponse(NetworkStream stream, string status, object payload)
+{
+	string json = JsonSerializer.Serialize(payload);
+	int contentLength = Encoding.UTF8.GetByteCount(json);
+	string header =
+		$"HTTP/1.1 {status}\r\n" +
+		"Connection: close\r\n" +
+		"Content-Type: application/json; charset=UTF-8\r\n" +
+		$"Content-Length: {contentLength}\r\n\r\n";
+
+	byte[] headerBytes = Encoding.UTF8.GetBytes(header);
+	byte[] bodyBytes = Encoding.UTF8.GetBytes(json);
+	stream.Write(headerBytes, 0, headerBytes.Length);
+	stream.Write(bodyBytes, 0, bodyBytes.Length);
+}
+
 static void WriteResponse(NetworkStream stream, string status, string body)
 {
 	int contentLength = Encoding.UTF8.GetByteCount(body);
@@ -163,12 +303,21 @@ internal sealed record GameRow(int GameId, DateTime StartTime, DateTime? EndTime
 
 internal sealed record PlayerRow(int PlayerId, string PlayerName, int MaxScore, DateTime EnterTime, DateTime? LeaveTime);
 
+internal sealed record LiveGameSession(int GameId, string Host, int Port, DateTime StartTime);
+internal sealed record CreateGameRequest(DateTime StartTime, string? Host, int? Port);
+internal sealed record SetGameEndRequest(int GameId, DateTime EndTime);
+internal sealed record UpsertPlayerRequest(int GameId, int PlayerId, string PlayerName, int MaxScore, DateTime EnterTime);
+internal sealed record UpdatePlayerScoreRequest(int GameId, int PlayerId, int MaxScore);
+internal sealed record SetPlayerLeaveRequest(int GameId, int PlayerId, DateTime LeaveTime);
+
 internal static class ScoreDataAccess
 {
 	private const string ConnectionString = "server=atr.eng.utah.edu;" +
 											"database=u1512040;" +
 											"uid=u1512040;" +
-											"password=f";
+											"password=f;" +
+											"Connection Timeout=3;" +
+											"Default Command Timeout=3";
 
 	public static void EnsureTablesExist()
 	{
@@ -185,6 +334,14 @@ internal static class ScoreDataAccess
 			);";
 		gamesCmd.ExecuteNonQuery();
 
+		EnsureColumnExists(conn, "Games", "Host", "ALTER TABLE Games ADD COLUMN Host VARCHAR(128) NULL;");
+		EnsureColumnExists(conn, "Games", "Port", "ALTER TABLE Games ADD COLUMN Port INT NULL;");
+		EnsureColumnExists(conn, "Games", "IsActive", "ALTER TABLE Games ADD COLUMN IsActive TINYINT(1) NOT NULL DEFAULT 1;");
+
+		using MySqlCommand backfillCmd = conn.CreateCommand();
+		backfillCmd.CommandText = "UPDATE Games SET IsActive = CASE WHEN EndTime IS NULL THEN 1 ELSE 0 END;";
+		backfillCmd.ExecuteNonQuery();
+
 		using MySqlCommand playersCmd = conn.CreateCommand();
 		playersCmd.CommandText = @"
 			CREATE TABLE IF NOT EXISTS Players (
@@ -200,6 +357,122 @@ internal static class ScoreDataAccess
 				INDEX idx_game (GameId)
 			);";
 		playersCmd.ExecuteNonQuery();
+	}
+
+	public static int? CreateGame(DateTime startTime, string? host, int? port)
+	{
+		using MySqlConnection conn = new(ConnectionString);
+		conn.Open();
+
+		using MySqlCommand cmd = conn.CreateCommand();
+		cmd.CommandText = @"
+			INSERT INTO Games (StartTime, EndTime, Host, Port, IsActive)
+			VALUES (@startTime, NULL, @host, @port, 1);
+			SELECT LAST_INSERT_ID();";
+		cmd.Parameters.AddWithValue("@startTime", startTime.ToString("yyyy-MM-dd H:mm:ss"));
+		cmd.Parameters.AddWithValue("@host", host);
+		cmd.Parameters.AddWithValue("@port", port);
+
+		object? result = cmd.ExecuteScalar();
+		return result == null ? null : Convert.ToInt32(result);
+	}
+
+	public static void SetGameEndTime(int gameId, DateTime endTime)
+	{
+		using MySqlConnection conn = new(ConnectionString);
+		conn.Open();
+
+		using MySqlCommand cmd = conn.CreateCommand();
+		cmd.CommandText = @"
+			UPDATE Games
+			SET EndTime = @endTime,
+				IsActive = 0
+			WHERE GameId = @gameId;";
+		cmd.Parameters.AddWithValue("@endTime", endTime.ToString("yyyy-MM-dd H:mm:ss"));
+		cmd.Parameters.AddWithValue("@gameId", gameId);
+		cmd.ExecuteNonQuery();
+	}
+
+	public static void UpsertPlayer(int gameId, int playerId, string playerName, int maxScore, DateTime enterTime)
+	{
+		using MySqlConnection conn = new(ConnectionString);
+		conn.Open();
+
+		using MySqlCommand cmd = conn.CreateCommand();
+		cmd.CommandText = @"
+			INSERT INTO Players (GameId, PlayerId, PlayerName, MaxScore, EnterTime, LeaveTime)
+			VALUES (@gameId, @playerId, @name, @maxScore, @enterTime, NULL)
+			ON DUPLICATE KEY UPDATE
+				PlayerName = VALUES(PlayerName),
+				MaxScore = GREATEST(MaxScore, VALUES(MaxScore));";
+		cmd.Parameters.AddWithValue("@gameId", gameId);
+		cmd.Parameters.AddWithValue("@playerId", playerId);
+		cmd.Parameters.AddWithValue("@name", playerName);
+		cmd.Parameters.AddWithValue("@maxScore", maxScore);
+		cmd.Parameters.AddWithValue("@enterTime", enterTime.ToString("yyyy-MM-dd H:mm:ss"));
+		cmd.ExecuteNonQuery();
+	}
+
+	public static void UpdatePlayerMaxScore(int gameId, int playerId, int maxScore)
+	{
+		using MySqlConnection conn = new(ConnectionString);
+		conn.Open();
+
+		using MySqlCommand cmd = conn.CreateCommand();
+		cmd.CommandText = @"
+			UPDATE Players
+			SET MaxScore = GREATEST(MaxScore, @maxScore)
+			WHERE GameId = @gameId AND PlayerId = @playerId;";
+		cmd.Parameters.AddWithValue("@gameId", gameId);
+		cmd.Parameters.AddWithValue("@playerId", playerId);
+		cmd.Parameters.AddWithValue("@maxScore", maxScore);
+		cmd.ExecuteNonQuery();
+	}
+
+	public static void SetPlayerLeaveTime(int gameId, int playerId, DateTime leaveTime)
+	{
+		using MySqlConnection conn = new(ConnectionString);
+		conn.Open();
+
+		using MySqlCommand cmd = conn.CreateCommand();
+		cmd.CommandText = @"
+			UPDATE Players
+			SET LeaveTime = @leaveTime
+			WHERE GameId = @gameId AND PlayerId = @playerId;";
+		cmd.Parameters.AddWithValue("@leaveTime", leaveTime.ToString("yyyy-MM-dd H:mm:ss"));
+		cmd.Parameters.AddWithValue("@gameId", gameId);
+		cmd.Parameters.AddWithValue("@playerId", playerId);
+		cmd.ExecuteNonQuery();
+	}
+
+	public static List<LiveGameSession> GetOpenGameSessions()
+	{
+		List<LiveGameSession> sessions = [];
+		using MySqlConnection conn = new(ConnectionString);
+		conn.Open();
+
+		using MySqlCommand cmd = conn.CreateCommand();
+		cmd.CommandText = @"
+			SELECT GameId, Host, Port, StartTime
+			FROM Games
+			WHERE IsActive = 1
+			  AND Host IS NOT NULL
+			  AND Host <> ''
+			  AND Port IS NOT NULL
+			ORDER BY StartTime DESC
+			LIMIT 200;";
+
+		using MySqlDataReader reader = cmd.ExecuteReader();
+		while (reader.Read())
+		{
+			sessions.Add(new LiveGameSession(
+				reader.GetInt32("GameId"),
+				reader.GetString("Host"),
+				reader.GetInt32("Port"),
+				reader.GetDateTime("StartTime")));
+		}
+
+		return sessions;
 	}
 
 	public static List<GameRow> GetGames()
@@ -248,5 +521,32 @@ internal static class ScoreDataAccess
 		}
 
 		return players;
+	}
+
+	private static void EnsureColumnExists(MySqlConnection conn, string tableName, string columnName, string alterSql)
+	{
+		if (ColumnExists(conn, tableName, columnName))
+		{
+			return;
+		}
+
+		using MySqlCommand cmd = conn.CreateCommand();
+		cmd.CommandText = alterSql;
+		cmd.ExecuteNonQuery();
+	}
+
+	private static bool ColumnExists(MySqlConnection conn, string tableName, string columnName)
+	{
+		using MySqlCommand cmd = conn.CreateCommand();
+		cmd.CommandText = @"
+			SELECT COUNT(*)
+			FROM information_schema.columns
+			WHERE table_schema = DATABASE()
+			  AND table_name = @table
+			  AND column_name = @column;";
+		cmd.Parameters.AddWithValue("@table", tableName);
+		cmd.Parameters.AddWithValue("@column", columnName);
+
+		return Convert.ToInt64(cmd.ExecuteScalar()) > 0;
 	}
 }

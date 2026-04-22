@@ -68,7 +68,15 @@ public class Server
 		}).Start();
 		Console.WriteLine("Server is running. Accepting clients.");
 		totalDuration.Start();
-		Console.ReadLine();
+		using var shutdownEvent = new ManualResetEventSlim(false);
+		Console.CancelKeyPress += (_, e) =>
+		{
+			e.Cancel = true;
+			Console.WriteLine("Shutdown requested (Ctrl+C).");
+			shutdownEvent.Set();
+		};
+		AppDomain.CurrentDomain.ProcessExit += (_, _) => shutdownEvent.Set();
+		shutdownEvent.Wait();
 		running = false;
 	}
 

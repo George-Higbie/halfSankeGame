@@ -95,8 +95,13 @@ namespace GUI.Components.Controllers
         }
 
         /// <summary>Connects to the game server and enters the initialization phase.</summary>
+        /// <param name="host">The TCP host to connect to (e.g. 127.0.0.1 when co-located).</param>
+        /// <param name="port">The TCP port to connect to.</param>
+        /// <param name="name">The player name sent during handshake.</param>
+        /// <param name="skinIndex">The skin index sent during handshake.</param>
+        /// <param name="advertisedHost">The host to record in the score database (e.g. LAN IP). Defaults to <paramref name="host"/> when null.</param>
         /// <exception cref="ArgumentNullException">Thrown when <paramref name="host"/> or <paramref name="name"/> is null.</exception>
-        public async Task ConnectAsync(string host, int port, string name, int skinIndex = 0)
+        public async Task ConnectAsync(string host, int port, string name, int skinIndex = 0, string? advertisedHost = null)
         {
             ArgumentNullException.ThrowIfNull(host);
             ArgumentNullException.ThrowIfNull(name);
@@ -104,7 +109,7 @@ namespace GUI.Components.Controllers
             _pendingPlayerId = null;
             _pendingWorldSize = null;
             _pendingWalls = new();
-            _currentHost = host;
+            _currentHost = advertisedHost ?? host;
             _currentPort = port;
             try
             {

@@ -343,8 +343,16 @@ else
 
     // ==================== UI State ====================
 
-    /// <summary>Default game-server host advertised when creating a new game.</summary>
+    /// <summary>TCP host used by the Blazor server to reach the game server (usually 127.0.0.1 when co-located).</summary>
     private readonly string _defaultGameHost = Environment.GetEnvironmentVariable("GAME_SERVER_HOST") ?? "localhost";
+
+    /// <summary>Host recorded in the score database so others can identify which machine is hosting (e.g. LAN IP).</summary>
+    private readonly string _advertisedGameHost = Environment.GetEnvironmentVariable("GAME_SERVER_ADVERTISED_HOST")
+        ?? Environment.GetEnvironmentVariable("GAME_SERVER_HOST")
+        ?? "localhost";
+
+    /// <summary>Optional host list to never use for gameplay connections (e.g., VPN adapter IPs).</summary>
+    private readonly string? _blockedGameHosts = Environment.GetEnvironmentVariable("GAME_SERVER_BLOCKED_HOSTS");
 
     /// <summary>Default game-server port advertised when creating a new game.</summary>
     private readonly int _defaultGamePort = int.TryParse(Environment.GetEnvironmentVariable("GAME_SERVER_PORT"), out int envPort) ? envPort : 11000;
@@ -908,7 +916,7 @@ else
     }
 
     /// <summary>Creates a new game endpoint advertisement and connects P1 to it.</summary>
-    private Task CreateAndConnectGame() => ConnectToEndpoint(_defaultGameHost, _defaultGamePort, PlayerName, _p1SkinIndex, isP1: true);
+    private Task CreateAndConnectGame() => ConnectToEndpoint(_defaultGameHost, _defaultGamePort, PlayerName, _p1SkinIndex, isP1: true, advertisedHost: _advertisedGameHost);
 
     /// <summary>Connects P1 to the selected advertised game endpoint.</summary>
     private Task ConnectSelectedGame()
@@ -941,7 +949,7 @@ else
     }
 
     /// <summary>Connect helper that routes to P1/P2 controller paths.</summary>
-    private async Task ConnectToEndpoint(string host, int port, string playerName, int skinIndex, bool isP1)
+    private async Task ConnectToEndpoint(string host, int port, string playerName, int skinIndex, bool isP1, string? advertisedHost = null)
     {
         if (isP1)
         {
@@ -968,6 +976,27 @@ else
             _p2Game.Disconnect();
         }
 
+        var hostCandidates = HostCandidateParser.Parse(host);
+        hostCandidates = HostCandidateParser.FilterBlockedHosts(hostCandidates, _blockedGameHosts);
+        if (hostCandidates.Count == 0)
+        {
+            if (isP1)
+            {
+                _status = "Error: invalid host";
+            }
+            else
+            {
+                _p2Status = "Error: invalid host";
+            }
+
+            SetFatalError("Connection Failed", "No valid host candidates were provided.");
+            StateHasChanged();
+            return;
+        }
+
+        Exception? lastException = null;
+        string? connectedHost = null;
+
         try
         {
             if (isP1)
@@ -981,14 +1010,39 @@ else
 
             StateHasChanged();
 
+            foreach (var candidateHost in hostCandidates)
+            {
+                try
+                {
+                    if (isP1)
+                    {
+                        await GameController.ConnectAsync(candidateHost, port, playerName, skinIndex, advertisedHost);
+                    }
+                    else if (_p2Game != null)
+                    {
+                        await _p2Game.ConnectAsync(candidateHost, port, playerName, skinIndex, advertisedHost);
+                    }
+
+                    connectedHost = candidateHost;
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    lastException = ex;
+                }
+            }
+
+            if (connectedHost == null)
+            {
+                throw lastException ?? new InvalidOperationException("No host candidates succeeded.");
+            }
+
             if (isP1)
             {
-                await GameController.ConnectAsync(host, port, playerName, skinIndex);
                 _status = "Connected";
             }
-            else if (_p2Game != null)
+            else
             {
-                await _p2Game.ConnectAsync(host, port, playerName, skinIndex);
                 _p2Status = "Connected";
             }
 
@@ -997,6 +1051,7 @@ else
         }
         catch (Exception ex)
         {
+            var attemptedHosts = string.Join(", ", hostCandidates);
             if (isP1)
             {
                 _status = "Error: " + ex.Message;
@@ -1006,7 +1061,7 @@ else
                 _p2Status = "Error: " + ex.Message;
             }
 
-            SetFatalError("Connection Failed", $"Could not connect to {host}:{port}. {ex.Message}");
+            SetFatalError("Connection Failed", $"Could not connect to any host [{attemptedHosts}] on port {port}. {ex.Message}");
             StateHasChanged();
         }
     }

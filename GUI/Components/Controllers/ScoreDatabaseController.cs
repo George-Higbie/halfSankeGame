@@ -6,6 +6,9 @@
 
 using System;
 using System.Collections.Generic;
+using System.Net.Http;
+using System.Text;
+using System.Text.Json;
 using MySql.Data.MySqlClient;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -23,6 +26,7 @@ namespace GUI.Components.Controllers
     public class ScoreDatabaseController
     {
         private readonly ILogger<ScoreDatabaseController> _logger;
+        private readonly HttpClient? _relayClient;
 
         // Assignment requirement: keep the connection string directly in source.
         /// <summary>
@@ -41,7 +45,23 @@ namespace GUI.Components.Controllers
         public ScoreDatabaseController(ILogger<ScoreDatabaseController>? logger = null)
         {
             _logger = logger ?? NullLogger<ScoreDatabaseController>.Instance;
-            EnsureTablesExist();
+
+            string? relayBaseUrl = Environment.GetEnvironmentVariable("SCORE_RELAY_BASE_URL");
+            if (!string.IsNullOrWhiteSpace(relayBaseUrl)
+                && Uri.TryCreate(relayBaseUrl.Trim(), UriKind.Absolute, out Uri? relayUri))
+            {
+                _relayClient = new HttpClient
+                {
+                    BaseAddress = relayUri,
+                    Timeout = TimeSpan.FromSeconds(3),
+                };
+                _logger.LogInformation("Score DB relay enabled via {RelayBaseUrl}.", relayUri);
+            }
+
+            if (_relayClient == null)
+            {
+                EnsureTablesExist();
+            }
         }
 
         /// <summary>
@@ -53,6 +73,11 @@ namespace GUI.Components.Controllers
         /// <returns>The inserted game ID, or null if the insert failed.</returns>
         public int? TryCreateGame(DateTime startTime, string? host = null, int? port = null)
         {
+            if (_relayClient != null)
+            {
+                return RelayCreateGame(startTime, host, port);
+            }
+
             try
             {
                 using var conn = new MySqlConnection(ConnectionString);
@@ -90,6 +115,12 @@ namespace GUI.Components.Controllers
         /// <param name="endTime">Client-observed disconnect time.</param>
         public void TrySetGameEndTime(int gameId, DateTime endTime)
         {
+            if (_relayClient != null)
+            {
+                RelayPost("/api/games/end", new SetGameEndRequest(gameId, endTime));
+                return;
+            }
+
             try
             {
                 using var conn = new MySqlConnection(ConnectionString);
@@ -121,6 +152,12 @@ namespace GUI.Components.Controllers
         /// <param name="enterTime">Client-observed first-seen time.</param>
         public void TryInsertPlayer(int gameId, int playerId, string name, int maxScore, DateTime enterTime)
         {
+            if (_relayClient != null)
+            {
+                RelayPost("/api/players/upsert", new UpsertPlayerRequest(gameId, playerId, name, maxScore, enterTime));
+                return;
+            }
+
             try
             {
                 using var conn = new MySqlConnection(ConnectionString);
@@ -154,6 +191,12 @@ namespace GUI.Components.Controllers
         /// <param name="maxScore">New candidate max score.</param>
         public void TryUpdatePlayerMaxScore(int gameId, int playerId, int maxScore)
         {
+            if (_relayClient != null)
+            {
+                RelayPost("/api/players/score", new UpdatePlayerScoreRequest(gameId, playerId, maxScore));
+                return;
+            }
+
             try
             {
                 using var conn = new MySqlConnection(ConnectionString);
@@ -184,6 +227,12 @@ namespace GUI.Components.Controllers
         /// <param name="leaveTime">Client-observed leave time.</param>
         public void TrySetPlayerLeaveTime(int gameId, int playerId, DateTime leaveTime)
         {
+            if (_relayClient != null)
+            {
+                RelayPost("/api/players/leave", new SetPlayerLeaveRequest(gameId, playerId, leaveTime));
+                return;
+            }
+
             try
             {
                 using var conn = new MySqlConnection(ConnectionString);
@@ -211,6 +260,11 @@ namespace GUI.Components.Controllers
         /// </summary>
         public IReadOnlyList<LiveGameSession> GetOpenGameSessions()
         {
+            if (_relayClient != null)
+            {
+                return RelayGetOpenGameSessions();
+            }
+
             var sessions = new List<LiveGameSession>();
             try
             {
@@ -246,6 +300,80 @@ namespace GUI.Components.Controllers
             return sessions;
         }
 
+        private int? RelayCreateGame(DateTime startTime, string? host, int? port)
+        {
+            if (_relayClient == null)
+            {
+                return null;
+            }
+
+            try
+            {
+                string payload = JsonSerializer.Serialize(new CreateGameRequest(startTime, host, port));
+                using var content = new StringContent(payload, Encoding.UTF8, "application/json");
+                using HttpResponseMessage response = _relayClient.PostAsync("/api/games/start", content).GetAwaiter().GetResult();
+                response.EnsureSuccessStatusCode();
+
+                string json = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                CreateGameResponse? result = JsonSerializer.Deserialize<CreateGameResponse>(json, new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true,
+                });
+                return result?.GameId;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to create game via score relay.");
+                return null;
+            }
+        }
+
+        private void RelayPost<TPayload>(string path, TPayload payload)
+        {
+            if (_relayClient == null)
+            {
+                return;
+            }
+
+            try
+            {
+                string json = JsonSerializer.Serialize(payload);
+                using var content = new StringContent(json, Encoding.UTF8, "application/json");
+                using HttpResponseMessage response = _relayClient.PostAsync(path, content).GetAwaiter().GetResult();
+                response.EnsureSuccessStatusCode();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to post score event to relay endpoint {Path}.", path);
+            }
+        }
+
+        private IReadOnlyList<LiveGameSession> RelayGetOpenGameSessions()
+        {
+            if (_relayClient == null)
+            {
+                return [];
+            }
+
+            try
+            {
+                using HttpResponseMessage response = _relayClient.GetAsync("/api/games/open").GetAwaiter().GetResult();
+                response.EnsureSuccessStatusCode();
+
+                string json = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                List<LiveGameSession>? sessions = JsonSerializer.Deserialize<List<LiveGameSession>>(json, new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true,
+                });
+                return sessions ?? [];
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to fetch open game sessions from score relay.");
+                return [];
+            }
+        }
+
         private void EnsureTablesExist()
         {
             try
@@ -259,18 +387,24 @@ namespace GUI.Components.Controllers
                         GameId INT NOT NULL AUTO_INCREMENT,
                         StartTime DATETIME NOT NULL,
                         EndTime DATETIME NULL,
-                        Host VARCHAR(128) NULL,
-                        Port INT NULL,
-                        IsActive TINYINT(1) NOT NULL DEFAULT 1,
                         PRIMARY KEY (GameId)
                     );";
                 gamesCmd.ExecuteNonQuery();
 
-                using var hostIndexCmd = conn.CreateCommand();
-                hostIndexCmd.CommandText = @"
-                    CREATE INDEX IF NOT EXISTS idx_games_active_host_port
-                    ON Games (IsActive, Host, Port);";
-                hostIndexCmd.ExecuteNonQuery();
+                EnsureColumnExists(conn, "Games", "Host", "ALTER TABLE Games ADD COLUMN Host VARCHAR(128) NULL;");
+                EnsureColumnExists(conn, "Games", "Port", "ALTER TABLE Games ADD COLUMN Port INT NULL;");
+                EnsureColumnExists(conn, "Games", "IsActive", "ALTER TABLE Games ADD COLUMN IsActive TINYINT(1) NOT NULL DEFAULT 1;");
+
+                using var gamesBackfillCmd = conn.CreateCommand();
+                gamesBackfillCmd.CommandText = @"
+                    UPDATE Games
+                    SET IsActive = CASE WHEN EndTime IS NULL THEN 1 ELSE 0 END;";
+                gamesBackfillCmd.ExecuteNonQuery();
+
+                EnsureIndexExists(
+                    conn,
+                    "idx_games_active_host_port",
+                    "CREATE INDEX idx_games_active_host_port ON Games (IsActive, Host, Port);");
 
                 using var playersCmd = conn.CreateCommand();
                 playersCmd.CommandText = @"
@@ -294,5 +428,60 @@ namespace GUI.Components.Controllers
                 _logger.LogWarning(ex, "Failed to verify or create score tables.");
             }
         }
+
+        private static void EnsureColumnExists(MySqlConnection conn, string tableName, string columnName, string alterSql)
+        {
+            if (ColumnExists(conn, tableName, columnName))
+            {
+                return;
+            }
+
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = alterSql;
+            cmd.ExecuteNonQuery();
+        }
+
+        private static bool ColumnExists(MySqlConnection conn, string tableName, string columnName)
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = @"
+                SELECT COUNT(*)
+                FROM information_schema.columns
+                WHERE table_schema = DATABASE()
+                  AND table_name = @table
+                  AND column_name = @column;";
+            cmd.Parameters.AddWithValue("@table", tableName);
+            cmd.Parameters.AddWithValue("@column", columnName);
+
+            return Convert.ToInt64(cmd.ExecuteScalar()) > 0;
+        }
+
+        private static void EnsureIndexExists(MySqlConnection conn, string indexName, string createSql)
+        {
+            using var checkCmd = conn.CreateCommand();
+            checkCmd.CommandText = @"
+                SELECT COUNT(*)
+                FROM information_schema.statistics
+                WHERE table_schema = DATABASE()
+                  AND table_name = 'Games'
+                  AND index_name = @indexName;";
+            checkCmd.Parameters.AddWithValue("@indexName", indexName);
+
+            if (Convert.ToInt64(checkCmd.ExecuteScalar()) > 0)
+            {
+                return;
+            }
+
+            using var createCmd = conn.CreateCommand();
+            createCmd.CommandText = createSql;
+            createCmd.ExecuteNonQuery();
+        }
+
+        private sealed record CreateGameRequest(DateTime StartTime, string? Host, int? Port);
+        private sealed record CreateGameResponse(int? GameId);
+        private sealed record SetGameEndRequest(int GameId, DateTime EndTime);
+        private sealed record UpsertPlayerRequest(int GameId, int PlayerId, string PlayerName, int MaxScore, DateTime EnterTime);
+        private sealed record UpdatePlayerScoreRequest(int GameId, int PlayerId, int MaxScore);
+        private sealed record SetPlayerLeaveRequest(int GameId, int PlayerId, DateTime LeaveTime);
     }
 }
