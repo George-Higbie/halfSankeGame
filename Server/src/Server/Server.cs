@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Net;
+using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Reflection;
 using System.Runtime.CompilerServices;
@@ -82,12 +84,33 @@ public class Server
 
 	public static void StartServer(int msPerFrame)
 	{
-		Networking.StartServer(HandleNewClientConnection, 11000);
+		IPAddress bindAddress = ResolveGameBindAddress();
+		Networking.StartServer(HandleNewClientConnection, 11000, bindAddress);
 		start_time = DateTime.Now;
 		while (running)
 		{
 			Update(msPerFrame);
 		}
+	}
+
+	private static bool IsPrivateIPv4(IPAddress address)
+	{
+		byte[] b = address.GetAddressBytes();
+		return b[0] == 10
+			|| (b[0] == 172 && b[1] >= 16 && b[1] <= 31)
+			|| (b[0] == 192 && b[1] == 168);
+	}
+
+	private static IPAddress ResolveGameBindAddress()
+	{
+		// Optional override still supported, but not required.
+		string? bindIpEnv = Environment.GetEnvironmentVariable("GAME_BIND_IP");
+		if (!string.IsNullOrWhiteSpace(bindIpEnv) && IPAddress.TryParse(bindIpEnv, out IPAddress? explicitBind))
+		{
+			return explicitBind;
+		}
+
+		return IPAddress.Any;
 	}
 
 	private static void HandleNewClientConnection(SocketState state)

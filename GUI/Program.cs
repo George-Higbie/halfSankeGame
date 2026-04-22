@@ -33,6 +33,9 @@ int listenPort = ResolveListenPort();
 builder.WebHost.UseStaticWebAssets();
 builder.WebHost.ConfigureKestrel(options =>
 {
+    // Prefer an explicit IPv4 LAN bind for hosted local play.
+    // On macOS, ListenAnyIP can surface as an IPv6 listener, which is less
+    // predictable for IPv4-only peers on the same Wi-Fi/LAN.
     options.Listen(IPAddress.Any, listenPort);
 });
 

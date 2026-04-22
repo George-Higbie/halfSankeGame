@@ -73,9 +73,9 @@ namespace NetworkUtil
 	}
 	public static class Networking
 	{
-		public static TcpListener StartServer(Action<SocketState> callMe, int port)
+		public static TcpListener StartServer(Action<SocketState> callMe, int port, IPAddress? bindAddress = null)
 		{
-			TcpListener tcpListener = new TcpListener(IPAddress.Any, port);
+			TcpListener tcpListener = new TcpListener(bindAddress ?? IPAddress.Any, port);
 			try
 			{
 				tcpListener.Start();
