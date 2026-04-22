@@ -58,7 +58,7 @@ let lastFrameAt = 0;
 const snakePredictionStateById = new Map();
 
 /** Maximum deviation (in pixels) allowed between client prediction and server position. */
-const PREDICTION_TOLERANCE_PIXELS = 7;
+const PREDICTION_TOLERANCE_PIXELS = 25;
 
 /** Represent a predicted snake state for reconciliation. */
 class SnakePredictionState {
@@ -604,9 +604,8 @@ function interpolateSnakeHeadFallback(previousSnake, currentSnake, alpha) {
  * - Otherwise interpolate only the head (not full body topology).
  */
 function interpolateLocalPlayerSnake(previousSnake, currentSnake, alpha) {
-    if (isDirectionTurnTransition(previousSnake?.dir, currentSnake?.dir)) {
-        return currentSnake;
-    }
+    // Don't snap on turn detection; blend smoothly instead to avoid snappiness.
+    // Body topology may change slightly, but it's smoother than an instant snap.
 
     const currentBody = Array.isArray(currentSnake.body) ? currentSnake.body : [];
     if (currentBody.length === 0) {
