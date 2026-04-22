@@ -449,15 +449,60 @@ input.menu-focused {
     font-size: 0.82rem;
 }
 
-.game-host,
-.game-start,
-.db-status {
+.open-games-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 6px;
+    max-height: 120px;
+    overflow-y: auto;
+}
+
+.open-game-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 5px 8px;
+    border-radius: 6px;
+    border: 1px solid rgba(255,255,255,0.10);
+    background: rgba(255,255,255,0.04);
+    cursor: pointer;
+    font-size: 0.75rem;
     color: var(--snake-ink-muted);
-    font-size: 0.74rem;
+    transition: background 0.15s, border-color 0.15s;
+}
+
+.open-game-item:hover {
+    background: rgba(255,255,255,0.10);
+    border-color: rgba(255,255,255,0.22);
+}
+
+.open-game-item.selected {
+    background: rgba(100,200,120,0.15);
+    border-color: rgba(100,200,120,0.45);
+    color: #b6e8be;
+}
+
+.game-host {
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 60%;
+}
+
+.game-age {
+    font-size: 0.70rem;
+    opacity: 0.7;
+    flex-shrink: 0;
+    margin-left: 6px;
 }
 
 .db-status {
-    margin-top: 6px;
+    color: var(--snake-ink-muted);
+    font-size: 0.74rem;
+    margin-top: 2px;
+    margin-bottom: 4px;
 }
 
 .error-overlay {

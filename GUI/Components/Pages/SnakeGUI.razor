@@ -56,14 +56,18 @@ else
 <div class="snake-sidebar @(_splitScreen ? "snake-sidebar-left" : "") @((_splitScreen ? _p1SidebarOpen : _sidebarOpen) ? "open" : "")">
     <h2 class="sidebar-title">@(_splitScreen ? "PLAYER 1" : "SNAKE")</h2>
 
-    <div class="field-group">
-        <label>Host</label>
-        <input @bind="Host" />
-    </div>
-    <div class="field-group">
-        <label>Port</label>
-        <input type="number" @bind="Port" />
-    </div>
+    @if (_openGames.Count > 0)
+    {
+        <div class="open-games-list">
+            @foreach (var g in _openGames)
+            {
+                <div class="open-game-item @(_selectedGameId == g.GameId ? "selected" : "")" @onclick="(() => SelectGame(g.GameId))">
+                    <span class="game-host">@g.Host</span>
+                    <span class="game-age">@((DateTime.UtcNow - g.StartTime).ToString(@"mm\:ss"))</span>
+                </div>
+            }
+        </div>
+    }
     @if (!string.IsNullOrWhiteSpace(_dbStatusMessage))
     {
         <div class="db-status">@_dbStatusMessage</div>
@@ -317,12 +321,6 @@ else
 
     /// <summary>Default game-server port advertised when creating a new game.</summary>
     private readonly int _defaultGamePort = int.TryParse(Environment.GetEnvironmentVariable("GAME_SERVER_PORT"), out int envPort) ? envPort : 11000;
-
-    /// <summary>Direct-connect host used by the sidebar connect action.</summary>
-    private string Host { get; set; } = Environment.GetEnvironmentVariable("GAME_SERVER_HOST") ?? "localhost";
-
-    /// <summary>Direct-connect port used by the sidebar connect action.</summary>
-    private int Port { get; set; } = int.TryParse(Environment.GetEnvironmentVariable("GAME_SERVER_PORT"), out int configuredPort) ? configuredPort : 11000;
 
     /// <summary>Open game sessions discovered from the score database.</summary>
     private readonly List<LiveGameSession> _openGames = [];
@@ -979,17 +977,11 @@ else
         }
     }
 
-    /// <summary>Disconnects any existing P1 session and connects with current settings.</summary>
-    private async Task Connect()
-    {
-        await ConnectToEndpoint(Host, Port, PlayerName, _p1SkinIndex, isP1: true);
-    }
+    /// <summary>Disconnects any existing P1 session and joins the selected advertised game.</summary>
+    private Task Connect() => ConnectSelectedGame();
 
-    /// <summary>Disconnects any existing P2 session and connects with current settings.</summary>
-    private async Task ConnectP2()
-    {
-        await ConnectToEndpoint(Host, Port, Player2Name, _p2SkinIndex, isP1: false);
-    }
+    /// <summary>Disconnects any existing P2 session and joins the selected advertised game.</summary>
+    private Task ConnectP2() => ConnectP2SelectedGame();
 
     /// <summary>Sends a respawn command for P1 and dismisses the death overlay.</summary>
     private void RespawnP1()
@@ -1092,7 +1084,7 @@ else
                         }
                     }
 
-                    await PublishBrowserRenderStateAsync(p1Snapshot, p2Snapshot);
+                    PublishBrowserRenderStateAsync(p1Snapshot, p2Snapshot);
                     await RefreshSkinPreviewsAsync();
 
                     // Mark players ready once the first player body arrives.
@@ -1119,7 +1111,7 @@ else
     /// Publishes the latest world state and rendering options to the browser-side
     /// canvas renderer when the effective render state changes.
     /// </summary>
-    private async Task PublishBrowserRenderStateAsync(GameController.RenderSnapshot p1Snapshot, GameController.RenderSnapshot? p2Snapshot)
+    private void PublishBrowserRenderStateAsync(GameController.RenderSnapshot p1Snapshot, GameController.RenderSnapshot? p2Snapshot)
     {
         if (_centerTargetSnakeId.HasValue && !p1Snapshot.Snakes.Any(s => s.Id == _centerTargetSnakeId.Value))
         {
@@ -1153,7 +1145,8 @@ else
 
         _lastBrowserRenderStateKey = renderKey;
 
-        await JsRuntime.InvokeVoidAsync("setSnakeRenderState", new
+        // Fire-and-forget: don't block the render loop on SignalR round-trip latency.
+        _ = JsRuntime.InvokeVoidAsync("setSnakeRenderState", new
         {
             viewW = _viewW,
             viewH = _viewH,

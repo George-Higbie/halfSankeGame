@@ -27,7 +27,17 @@ let previousRenderState = null;
 let latestRenderStateReceivedAt = 0;
 
 /** @type {number} Estimated milliseconds between snapshots for interpolation. */
-let interpolationWindowMs = 16;
+let interpolationWindowMs = 33;
+
+const INTERPOLATION_MIN_MS = 16;
+const INTERPOLATION_MAX_MS = 150;
+const INTERPOLATION_EMA_FACTOR = 0.20;
+const MAX_EXTRAPOLATION_ALPHA = 1.0;
+const MAX_FALLBACK_HEAD_BLEND_DISTANCE = 80;
+const TURN_DEBOUNCE_SNAPSHOTS = 1;
+
+/** @type {Map<number, number>} Remaining snapshot-debounce frames per snake after a turn. */
+const snakeTurnDebounceById = new Map();
 
 /** @type {Array<any>} Skin catalog pushed from .NET and used by the browser renderer. */
 let skinCatalog = [];
@@ -37,6 +47,31 @@ let renderLoopHandle = 0;
 
 /** @type {number} Timestamp of the last browser-rendered frame. */
 let lastFrameAt = 0;
+
+// ==================== DIAGNOSTIC INSTRUMENTATION ====================
+/** @type {boolean} Enable on-screen debug overlay. */
+let debugOverlayEnabled = true;
+
+/** @type {number} Current interpolation alpha for the local player (0.0 - 1.0). */
+let currentInterpolationAlpha = 0;
+
+/** @type {boolean} Whether a turn transition was detected on the local player in the current frame. */
+let currentFrameTurnTransition = false;
+
+/** @type {Array<number>} Ringbuffer of last 10 alpha values for display. */
+const alphaHistory = [];
+
+/** @type {number} Count of snapshots received. */
+let snapshotCount = 0;
+
+/** @type {number} Timestamp of the first snapshot (for frequency calculation). */
+let firstSnapshotTime = 0;
+
+/** @type {Array<number>} Last 10 snapshot deltas in ms for moving average. */
+const snapshotDeltaHistory = [];
+
+/** @type {number} Time of the last snapshot arrival (for computing deltas). */
+let lastSnapshotTime = 0;
 
 /** Persistent camera state for each viewport. */
 const cameraStates = {
@@ -138,9 +173,14 @@ function _fillDitherRegion(c, x0, w, h, r) {
  * player mode) and split dithering (left half reacts to P1, right half to P2).
  * @param {number} leftR  - Star radius for the left half (or full board if rightR < 0).
  * @param {number} rightR - Star radius for the right half. -1 = single-mode (use leftR for all).
+ * @param {boolean} forceSplit - When true, always use split-mask rendering regardless of radii sentinels.
  */
-window.updateScoreboardDither = (leftR, rightR) => {
-    if (!_ditherEl) _ditherEl = document.getElementById('scoreboardOverlay');
+window.updateScoreboardDither = (leftR, rightR, forceSplit = false) => {
+    if (!_ditherEl || !_ditherEl.isConnected) {
+        _ditherEl = document.getElementById('scoreboardOverlay');
+        _lastDitherL = -999;
+        _lastDitherR = -999;
+    }
     if (!_ditherEl) return;
 
     // Avoid redundant DOM writes
@@ -148,7 +188,7 @@ window.updateScoreboardDither = (leftR, rightR) => {
     _lastDitherL = leftR;
     _lastDitherR = rightR;
 
-    const isSplit = rightR >= -0.5;  // rightR === -1 means single-player mode
+    const isSplit = forceSplit || rightR >= -0.5;
 
     // ── Single-player mode ──
     if (!isSplit) {
@@ -220,11 +260,32 @@ window.setSnakeSkinCatalog = (skins) => {
  */
 window.setSnakeRenderState = (state) => {
     const receivedAt = performance.now();
+    
+    // Track snapshot frequency for diagnostics.
+    snapshotCount++;
+    if (firstSnapshotTime === 0) {
+        firstSnapshotTime = receivedAt;
+    }
+    if (lastSnapshotTime > 0) {
+        const delta = receivedAt - lastSnapshotTime;
+        snapshotDeltaHistory.push(delta);
+        if (snapshotDeltaHistory.length > 10) {
+            snapshotDeltaHistory.shift();
+        }
+    }
+    lastSnapshotTime = receivedAt;
+    
     if (latestRenderState) {
         previousRenderState = latestRenderState;
         const snapshotDelta = receivedAt - latestRenderStateReceivedAt;
         if (Number.isFinite(snapshotDelta) && snapshotDelta > 0) {
-            interpolationWindowMs = clamp(snapshotDelta, 16, 80);
+            // Smooth cadence changes so one delayed/early packet does not visibly jitter motion.
+            const clampedDelta = clamp(snapshotDelta, INTERPOLATION_MIN_MS, INTERPOLATION_MAX_MS);
+            interpolationWindowMs = clamp(
+                interpolationWindowMs + ((clampedDelta - interpolationWindowMs) * INTERPOLATION_EMA_FACTOR),
+                INTERPOLATION_MIN_MS,
+                INTERPOLATION_MAX_MS
+            );
         }
     }
     else {
@@ -253,6 +314,13 @@ window.initRenderJS = (dotnetRef) => {
     ensureCanvas();
     resizeCanvas();
     window.addEventListener('resize', resizeCanvas);
+
+    // Debug overlay toggle: press 'D' to show/hide diagnostics.
+    window.addEventListener('keydown', (e) => {
+        if (e.key.toLowerCase() === 'd') {
+            debugOverlayEnabled = !debugOverlayEnabled;
+        }
+    });
 
     if (!renderLoopHandle) {
         lastFrameAt = performance.now();
@@ -310,6 +378,7 @@ function resetCamera(camera) {
 /** Resets cached visual-effect state for a viewport. */
 function resetViewportFx(fxState) {
     fxState.deathAnims.clear();
+    fxState.completedDeathAnims.clear();
     fxState.powerupFirstSeenAt.clear();
     fxState.wallCache = null;
     fxState.wallCacheKey = '';
@@ -319,6 +388,8 @@ function resetViewportFx(fxState) {
 function createViewportFxState() {
     return {
         deathAnims: new Map(),
+        /** Snake IDs whose death animation has already played — prevents re-spawning on repeated dead snapshots. */
+        completedDeathAnims: new Set(),
         powerupFirstSeenAt: new Map(),
         wallCache: null,
         wallCacheKey: ''
@@ -335,7 +406,15 @@ function buildInterpolatedRenderState(now) {
         return latestRenderState;
     }
 
-    const alpha = clamp((now - latestRenderStateReceivedAt) / interpolationWindowMs, 0, 1);
+    const alpha = clamp((now - latestRenderStateReceivedAt) / interpolationWindowMs, 0, MAX_EXTRAPOLATION_ALPHA);
+    
+    // Record alpha for diagnostics.
+    currentInterpolationAlpha = alpha;
+    alphaHistory.push(alpha);
+    if (alphaHistory.length > 10) {
+        alphaHistory.shift();
+    }
+    
     return {
         ...latestRenderState,
         p1: interpolateViewport(previousRenderState.p1, latestRenderState.p1, alpha),
@@ -371,12 +450,33 @@ function interpolateSnakes(previousSnakes, currentSnakes, playerId, alpha) {
 
 /** Interpolates a single snake body when the topology is stable. */
 function interpolateSnake(previousSnake, currentSnake, playerId, alpha) {
-    if (!previousSnake || currentSnake.snake === playerId || currentSnake.died === true || currentSnake.alive !== true) {
+    if (!previousSnake || currentSnake.died === true || currentSnake.alive !== true) {
         return currentSnake;
     }
 
-    if (!Array.isArray(previousSnake.body) || !Array.isArray(currentSnake.body) || previousSnake.body.length !== currentSnake.body.length) {
+    const isLocalPlayer = currentSnake.snake === playerId;
+    if (isLocalPlayer) {
+        return interpolateLocalPlayerSnake(previousSnake, currentSnake, alpha);
+    }
+
+    const snakeId = typeof currentSnake.snake === 'number' ? currentSnake.snake : null;
+    if (snakeId !== null && consumeTurnDebounce(snakeId)) {
         return currentSnake;
+    }
+
+    if (isDirectionTurnTransition(previousSnake.dir, currentSnake.dir)) {
+        if (snakeId !== null) {
+            snakeTurnDebounceById.set(snakeId, TURN_DEBOUNCE_SNAPSHOTS);
+        }
+        return currentSnake;
+    }
+
+    if (!Array.isArray(previousSnake.body) || !Array.isArray(currentSnake.body)) {
+        return currentSnake;
+    }
+
+    if (previousSnake.body.length !== currentSnake.body.length) {
+        return interpolateSnakeHeadFallback(previousSnake, currentSnake, alpha);
     }
 
     return {
@@ -384,6 +484,130 @@ function interpolateSnake(previousSnake, currentSnake, playerId, alpha) {
         body: currentSnake.body.map((point, index) => interpolatePoint(previousSnake.body[index], point, alpha)),
         dir: previousSnake.dir && currentSnake.dir ? interpolatePoint(previousSnake.dir, currentSnake.dir, alpha) : currentSnake.dir
     };
+}
+
+/**
+ * Interpolates snake motion even when point counts differ between snapshots.
+ * We blend the head only and keep current topology to avoid body-shape flicker.
+ */
+function interpolateSnakeHeadFallback(previousSnake, currentSnake, alpha) {
+    const currentBody = Array.isArray(currentSnake.body) ? currentSnake.body : [];
+    if (currentBody.length === 0) {
+        return currentSnake;
+    }
+
+    const previousBody = Array.isArray(previousSnake.body) ? previousSnake.body : [];
+    const body = currentBody.slice();
+    const currentHeadIndex = body.length - 1;
+    const previousHeadIndex = previousBody.length - 1;
+
+    if (previousHeadIndex >= 0) {
+        const previousHead = previousBody[previousHeadIndex];
+        const currentHead = body[currentHeadIndex];
+        const dx = currentHead.X - previousHead.X;
+        const dy = currentHead.Y - previousHead.Y;
+        const stepDistance = Math.hypot(dx, dy);
+
+        // Large one-frame deltas are usually topology churn/respawn transitions.
+        // Blending them causes visible flashes, so trust the current snapshot instead.
+        if (Number.isFinite(stepDistance) && stepDistance <= MAX_FALLBACK_HEAD_BLEND_DISTANCE) {
+            body[currentHeadIndex] = interpolatePoint(previousHead, currentHead, alpha);
+        }
+    }
+
+    return {
+        ...currentSnake,
+        body,
+        dir: previousSnake.dir && currentSnake.dir ? interpolatePoint(previousSnake.dir, currentSnake.dir, alpha) : currentSnake.dir
+    };
+}
+
+/**
+ * Local-player interpolation prioritizes control accuracy on turns.
+ * - If the direction axis changes, render the latest authoritative snapshot.
+ * - Otherwise interpolate only the head (not full body topology).
+ */
+function interpolateLocalPlayerSnake(previousSnake, currentSnake, alpha) {
+    currentFrameTurnTransition = false;
+    
+    if (isDirectionTurnTransition(previousSnake?.dir, currentSnake?.dir)) {
+        currentFrameTurnTransition = true;
+        return currentSnake;
+    }
+
+    const currentBody = Array.isArray(currentSnake.body) ? currentSnake.body : [];
+    if (currentBody.length === 0) {
+        return currentSnake;
+    }
+
+    const previousBody = Array.isArray(previousSnake.body) ? previousSnake.body : [];
+    const currentHeadIndex = currentBody.length - 1;
+    const previousHeadIndex = previousBody.length - 1;
+    if (previousHeadIndex < 0) {
+        return currentSnake;
+    }
+
+    const body = currentBody.slice();
+    const previousHead = previousBody[previousHeadIndex];
+    const currentHead = body[currentHeadIndex];
+    const dx = currentHead.X - previousHead.X;
+    const dy = currentHead.Y - previousHead.Y;
+    const stepDistance = Math.hypot(dx, dy);
+
+    if (Number.isFinite(stepDistance) && stepDistance <= MAX_FALLBACK_HEAD_BLEND_DISTANCE) {
+        body[currentHeadIndex] = interpolatePoint(previousHead, currentHead, alpha);
+    }
+
+    return {
+        ...currentSnake,
+        body,
+        dir: previousSnake.dir && currentSnake.dir ? interpolatePoint(previousSnake.dir, currentSnake.dir, alpha) : currentSnake.dir
+    };
+}
+
+/**
+ * Returns true when movement axis changes between snapshots (a turn transition).
+ * Interpolating across axis changes can create transient body kinks while spamming turns.
+ */
+function isDirectionTurnTransition(previousDir, currentDir) {
+    const previousAxis = directionAxis(previousDir);
+    const currentAxis = directionAxis(currentDir);
+    return previousAxis !== null && currentAxis !== null && previousAxis !== currentAxis;
+}
+
+/** Returns 'x', 'y', or null when the direction vector is missing/degenerate. */
+function directionAxis(dir) {
+    if (!dir || (!Number.isFinite(dir.X) && !Number.isFinite(dir.Y))) {
+        return null;
+    }
+
+    const absX = Math.abs(dir.X || 0);
+    const absY = Math.abs(dir.Y || 0);
+    if (absX === 0 && absY === 0) {
+        return null;
+    }
+
+    return absX >= absY ? 'x' : 'y';
+}
+
+/**
+ * Consumes one debounce snapshot for the given snake.
+ * Returns true when interpolation should be skipped this snapshot.
+ */
+function consumeTurnDebounce(snakeId) {
+    const remaining = snakeTurnDebounceById.get(snakeId);
+    if (!Number.isFinite(remaining) || remaining <= 0) {
+        return false;
+    }
+
+    if (remaining <= 1) {
+        snakeTurnDebounceById.delete(snakeId);
+    }
+    else {
+        snakeTurnDebounceById.set(snakeId, remaining - 1);
+    }
+
+    return true;
 }
 
 /** Interpolates powerup locations between snapshots. */
@@ -409,7 +633,50 @@ function interpolatePowerups(previousPowerups, currentPowerups, alpha) {
     });
 }
 
-/** Interpolates between two points. */
+/**
+ * Draws diagnostic debug information overlay (FPS, alpha, turn flags, snapshot frequency).
+ * @param {CanvasRenderingContext2D} ctx - Canvas rendering context.
+ * @param {number} width - Canvas width.
+ * @param {number} height - Canvas height.
+ */
+function drawDebugOverlay(ctx, width, height) {
+    if (!debugOverlayEnabled) return;
+
+    ctx.save();
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    ctx.fillRect(10, 10, 320, 180);
+
+    ctx.fillStyle = '#00ff00';
+    ctx.font = "11px 'Courier New', monospace";
+    ctx.textAlign = 'left';
+
+    const avgSnapshotDelta = snapshotDeltaHistory.length > 0
+        ? snapshotDeltaHistory.reduce((a, b) => a + b, 0) / snapshotDeltaHistory.length
+        : 0;
+
+    const lines = [
+        `[DIAGNOSTICS]`,
+        `Alpha: ${currentInterpolationAlpha.toFixed(3)} (${(currentInterpolationAlpha * 100).toFixed(1)}%)`,
+        `Turn?: ${currentFrameTurnTransition ? 'YES' : 'NO'}`,
+        `Snapshot Δ: ${avgSnapshotDelta.toFixed(1)}ms (${snapshotDeltaHistory.length} samples)`,
+        `InterpolWindow: ${interpolationWindowMs.toFixed(1)}ms`,
+        `Snapshots: ${snapshotCount} total`,
+        `Alpha History: [${alphaHistory.map(a => a.toFixed(2)).join(', ')}]`,
+        `Debug: Press 'D' to toggle overlay`,
+    ];
+
+    let y = 25;
+    for (const line of lines) {
+        ctx.fillText(line, 20, y);
+        y += 15;
+    }
+
+    ctx.restore();
+}
+
+/**
+ * Interpolates between two points.
+ */
 function interpolatePoint(previousPoint, currentPoint, alpha) {
     if (!previousPoint || !currentPoint) {
         return currentPoint;
@@ -488,18 +755,30 @@ function drawGame(ctx, state, dt, timeSeconds) {
     }
 
     if (state.showScoreboard && state.p1 && state.p1.playerId != null) {
+        const scoreboardBounds = getScoreboardBounds(state.splitScreen, width);
         if (state.splitScreen && state.p2) {
-            const radii = computeSplitDitherRadii(width, p1Head, p2Head, state.p1.showDeath, state.p2.showDeath);
-            window.updateScoreboardDither(radii.leftR, radii.rightR);
+            const radii = computeSplitDitherRadii(p1Head, p2Head, state.p1.showDeath, state.p2.showDeath, scoreboardBounds);
+            window.updateScoreboardDither(radii.leftR, radii.rightR, true);
         }
         else {
-            const ditherR = state.p1.showDeath ? -1 : computeDitherForHead(p1Head, 12, 12, 224, 192);
-            window.updateScoreboardDither(ditherR, -1);
+            const ditherR = state.p1.showDeath
+                ? -1
+                : computeDitherForHead(
+                    p1Head,
+                    scoreboardBounds.left,
+                    scoreboardBounds.top,
+                    scoreboardBounds.right,
+                    scoreboardBounds.bottom
+                );
+            window.updateScoreboardDither(ditherR, -1, false);
         }
     }
     else {
-        window.updateScoreboardDither(-1, -1);
+        window.updateScoreboardDither(-1, -1, false);
     }
+
+    // Draw diagnostic overlay if enabled.
+    drawDebugOverlay(ctx, width, height);
 }
 
 /**
@@ -1029,7 +1308,8 @@ function drawDeathAnimations(ctx, snakes, playerId, playerSkinIndex, fxState, dt
         if (snakeId == null) continue;
 
         if ((snake.died === true || snake.alive !== true) && Array.isArray(snake.body) && snake.body.length >= 2 && snake.dc !== true) {
-            if (!fxState.deathAnims.has(snakeId)) {
+            // Only spawn the animation once per death — don't restart when the snake stays dead
+            if (!fxState.deathAnims.has(snakeId) && !fxState.completedDeathAnims.has(snakeId)) {
                 fxState.deathAnims.set(snakeId, {
                     elapsedSeconds: 0,
                     path: snake.body.map((point) => ({ X: point.X, Y: point.Y })),
@@ -1038,8 +1318,10 @@ function drawDeathAnimations(ctx, snakes, playerId, playerSkinIndex, fxState, dt
                 });
             }
         }
-        else if (snake.alive === true && fxState.deathAnims.has(snakeId)) {
+        else if (snake.alive === true) {
+            // Snake respawned — clear both the active anim and the completed guard so it can die again
             fxState.deathAnims.delete(snakeId);
+            fxState.completedDeathAnims.delete(snakeId);
         }
     }
 
@@ -1127,6 +1409,7 @@ function drawDeathAnimations(ctx, snakes, playerId, playerSkinIndex, fxState, dt
         if (anim.elapsedSeconds > totalLength / explosionSpeed + 1) {
             anim.isFinished = true;
             fxState.deathAnims.delete(snakeId);
+            fxState.completedDeathAnims.add(snakeId);
         }
     }
 }
@@ -1286,6 +1569,51 @@ function wallRect(wall) {
     return { x, y, w, h };
 }
 
+/** Returns current scoreboard screen bounds, with legacy fallbacks when not mounted yet. */
+function getScoreboardBounds(isSplitScreen, viewWidth) {
+    if (!_ditherEl || !_ditherEl.isConnected) {
+        _ditherEl = document.getElementById('scoreboardOverlay');
+    }
+
+    if (_ditherEl) {
+        const rect = _ditherEl.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+            return {
+                left: rect.left,
+                top: rect.top,
+                right: rect.right,
+                bottom: rect.bottom,
+                midX: rect.left + rect.width / 2
+            };
+        }
+    }
+
+    if (isSplitScreen) {
+        const centerX = viewWidth / 2;
+        const sbW = 212;
+        const sbH = 180;
+        const sbLeft = centerX - sbW / 2;
+        const sbTop = 36;
+        const sbRight = centerX + sbW / 2;
+        const sbBottom = sbTop + sbH;
+        return {
+            left: sbLeft,
+            top: sbTop,
+            right: sbRight,
+            bottom: sbBottom,
+            midX: centerX
+        };
+    }
+
+    return {
+        left: 12,
+        top: 12,
+        right: 224,
+        bottom: 192,
+        midX: (12 + 224) / 2
+    };
+}
+
 /** Computes a single-player scoreboard dither radius. */
 function computeDitherForHead(head, sbLeft, sbTop, sbRight, sbBottom) {
     if (!head) return -1;
@@ -1308,14 +1636,12 @@ function computeDitherForHead(head, sbLeft, sbTop, sbRight, sbBottom) {
 }
 
 /** Computes split-screen scoreboard dither radii. */
-function computeSplitDitherRadii(viewWidth, p1Head, p2Head, p1Dead, p2Dead) {
-    const centerX = viewWidth / 2;
-    const sbW = 212;
-    const sbH = 180;
-    const sbLeft = centerX - sbW / 2;
-    const sbTop = 36;
-    const sbRight = centerX + sbW / 2;
-    const sbBottom = sbTop + sbH;
+function computeSplitDitherRadii(p1Head, p2Head, p1Dead, p2Dead, scoreboardBounds) {
+    const sbLeft = scoreboardBounds.left;
+    const sbTop = scoreboardBounds.top;
+    const sbRight = scoreboardBounds.right;
+    const sbBottom = scoreboardBounds.bottom;
+    const centerX = scoreboardBounds.midX;
 
     return {
         leftR: p1Dead ? -1 : computeDitherForHead(p1Head, sbLeft, sbTop, centerX, sbBottom),

@@ -67,6 +67,21 @@ namespace GUI.Components.Controllers
         private int _cachedRenderSnapshotVersion = -1;
         private int _stateVersion;
 
+        private static void FireAndForget(Action action)
+        {
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    action();
+                }
+                catch
+                {
+                    // Best-effort telemetry writes must never stall gameplay.
+                }
+            });
+        }
+
         private sealed class PlayerSessionState
         {
             public int MaxScore { get; set; }
@@ -422,14 +437,21 @@ namespace GUI.Components.Controllers
             {
                 state = new PlayerSessionState { MaxScore = snake.MaxScore, LeaveRecorded = false };
                 _playerSessionStates[snake.Id] = state;
-                _scoreDb.TryInsertPlayer(_currentGameId.Value, snake.Id, snake.Name ?? $"Player {snake.Id}", snake.MaxScore, seenTime);
+                int gameId = _currentGameId.Value;
+                int snakeId = snake.Id;
+                string playerName = snake.Name ?? $"Player {snake.Id}";
+                int maxScore = snake.MaxScore;
+                FireAndForget(() => _scoreDb.TryInsertPlayer(gameId, snakeId, playerName, maxScore, seenTime));
                 return;
             }
 
             if (snake.MaxScore > state.MaxScore)
             {
                 state.MaxScore = snake.MaxScore;
-                _scoreDb.TryUpdatePlayerMaxScore(_currentGameId.Value, snake.Id, snake.MaxScore);
+                int gameId = _currentGameId.Value;
+                int snakeId = snake.Id;
+                int maxScore = snake.MaxScore;
+                FireAndForget(() => _scoreDb.TryUpdatePlayerMaxScore(gameId, snakeId, maxScore));
             }
         }
 
@@ -442,7 +464,8 @@ namespace GUI.Components.Controllers
 
             if (_playerSessionStates.TryGetValue(snakeId, out var state) && !state.LeaveRecorded)
             {
-                _scoreDb.TrySetPlayerLeaveTime(_currentGameId.Value, snakeId, leaveTime);
+                int gameId = _currentGameId.Value;
+                FireAndForget(() => _scoreDb.TrySetPlayerLeaveTime(gameId, snakeId, leaveTime));
                 state.LeaveRecorded = true;
             }
         }
