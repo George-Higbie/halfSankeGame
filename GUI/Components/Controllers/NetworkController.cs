@@ -206,17 +206,17 @@ namespace GUI.Components.Controllers
 
                         if (root.TryGetProperty("wall", out _))
                         {
-                            var w = JsonSerializer.Deserialize<Wall>(line);
+                            var w = root.Deserialize<Wall>();
                             if (w != null) OnWallReceived?.Invoke(w);
                         }
                         else if (root.TryGetProperty("snake", out _))
                         {
-                            var s = JsonSerializer.Deserialize<Snake>(line);
+                            var s = root.Deserialize<Snake>();
                             if (s != null) OnSnakeReceived?.Invoke(s);
                         }
                         else if (root.TryGetProperty("power", out _))
                         {
-                            var p = JsonSerializer.Deserialize<Powerup>(line);
+                            var p = root.Deserialize<Powerup>();
                             if (p != null) OnPowerupReceived?.Invoke(p);
                         }
                         else

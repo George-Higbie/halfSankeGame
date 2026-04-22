@@ -8,6 +8,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using GUI.Components.Models;
 
@@ -19,6 +20,31 @@ namespace GUI.Components.Controllers
     /// </summary>
     public class GameController
     {
+        /// <summary>
+        /// Immutable render snapshot rebuilt only when network state changes.
+        /// The renderer reads from this to avoid per-frame deep-copy churn.
+        /// </summary>
+        public sealed class RenderSnapshot
+        {
+            /// <summary>The server-assigned player ID captured in this snapshot.</summary>
+            public int? PlayerId { get; init; }
+
+            /// <summary>The world size captured in this snapshot.</summary>
+            public int? WorldSize { get; init; }
+
+            /// <summary>Deep-copied snakes visible at snapshot time.</summary>
+            public IReadOnlyList<Snake> Snakes { get; init; } = Array.Empty<Snake>();
+
+            /// <summary>Deep-copied walls visible at snapshot time.</summary>
+            public IReadOnlyCollection<Wall> Walls { get; init; } = Array.Empty<Wall>();
+
+            /// <summary>Deep-copied powerups visible at snapshot time.</summary>
+            public IReadOnlyCollection<Powerup> Powerups { get; init; } = Array.Empty<Powerup>();
+
+            /// <summary>Deep-copied player snake captured in this snapshot, if present.</summary>
+            public Snake? PlayerSnake { get; init; }
+        }
+
         private ConcurrentDictionary<int, Snake> _snakes = new();
         private ConcurrentDictionary<int, Wall> _walls = new();
         private ConcurrentDictionary<int, Powerup> _powerups = new();
@@ -33,6 +59,10 @@ namespace GUI.Components.Controllers
         private int? _currentPort;
         private bool _sessionFinalized;
         private readonly Dictionary<int, PlayerSessionState> _playerSessionStates = new();
+        private readonly object _snapshotLock = new();
+        private RenderSnapshot? _cachedRenderSnapshot;
+        private int _cachedRenderSnapshotVersion = -1;
+        private int _stateVersion;
 
         private sealed class PlayerSessionState
         {
@@ -83,6 +113,45 @@ namespace GUI.Components.Controllers
         /// <summary>Returns a thread-safe snapshot of all powerups.</summary>
         public IReadOnlyCollection<Powerup> GetPowerups() =>
             _powerups.Values.ToList().AsReadOnly();
+
+        /// <summary>
+        /// Returns a cached immutable snapshot of world state for the hot render path.
+        /// The snapshot is rebuilt only after network-driven state changes.
+        /// </summary>
+        public RenderSnapshot GetRenderSnapshot()
+        {
+            int currentVersion = Volatile.Read(ref _stateVersion);
+            var cached = _cachedRenderSnapshot;
+            if (cached != null && _cachedRenderSnapshotVersion == currentVersion)
+            {
+                return cached;
+            }
+
+            lock (_snapshotLock)
+            {
+                currentVersion = Volatile.Read(ref _stateVersion);
+                if (_cachedRenderSnapshot != null && _cachedRenderSnapshotVersion == currentVersion)
+                {
+                    return _cachedRenderSnapshot;
+                }
+
+                var snakes = _snakes.Values.Select(s => s.Clone()).ToArray();
+                var playerId = PlayerId;
+                var snapshot = new RenderSnapshot
+                {
+                    PlayerId = playerId,
+                    WorldSize = WorldSize,
+                    Snakes = snakes,
+                    Walls = _walls.Values.Select(CloneWall).ToArray(),
+                    Powerups = _powerups.Values.Select(ClonePowerup).ToArray(),
+                    PlayerSnake = playerId.HasValue ? snakes.FirstOrDefault(s => s.Id == playerId.Value) : null
+                };
+
+                _cachedRenderSnapshot = snapshot;
+                _cachedRenderSnapshotVersion = currentVersion;
+                return snapshot;
+            }
+        }
 
         /// <summary>Fires when the current player dies. Raised once per death event.</summary>
         public event Action? OnPlayerDied;
@@ -135,7 +204,7 @@ namespace GUI.Components.Controllers
             _powerups.Clear();
             _walls.Clear();
             _pendingWalls.Clear();
-            OnStateUpdated?.Invoke();
+            NotifyStateChanged();
         }
 
         /// <summary>Sends a movement command to the server if the handshake is complete.</summary>
@@ -168,27 +237,27 @@ namespace GUI.Components.Controllers
         {
             if (_isInitializing) _pendingPlayerId = id;
             else PlayerId = id;
-            OnStateUpdated?.Invoke();
+            NotifyStateChanged();
         }
 
         private void HandleWorldSizeReceived(int ws)
         {
             if (_isInitializing) _pendingWorldSize = ws;
             else WorldSize = ws;
-            OnStateUpdated?.Invoke();
+            NotifyStateChanged();
         }
 
         private void HandleWallReceived(Wall w)
         {
             if (_isInitializing) _pendingWalls[w.Id] = w;
             else _walls[w.Id] = w;
-            OnStateUpdated?.Invoke();
+            NotifyStateChanged();
         }
 
         private void HandleNetworkDisconnected()
         {
             FinalizeGameSession(DateTime.Now);
-            OnStateUpdated?.Invoke();
+            NotifyStateChanged();
         }
 
         private void HandleSnakeReceived(Snake s)
@@ -220,7 +289,7 @@ namespace GUI.Components.Controllers
                 RecordPlayerSeen(s, DateTime.Now);
             }
 
-            OnStateUpdated?.Invoke();
+            NotifyStateChanged();
         }
 
         private void HandlePowerupReceived(Powerup p)
@@ -232,8 +301,37 @@ namespace GUI.Components.Controllers
             else
                 _powerups[p.Id] = p;
 
+            NotifyStateChanged();
+        }
+
+        /// <summary>
+        /// Invalidates the cached render snapshot and notifies listeners.
+        /// </summary>
+        private void NotifyStateChanged()
+        {
+            Interlocked.Increment(ref _stateVersion);
             OnStateUpdated?.Invoke();
         }
+
+        /// <summary>Creates a deep copy of a wall for render snapshots.</summary>
+        private static Wall CloneWall(Wall wall) => new()
+        {
+            Id = wall.Id,
+            Point1 = ClonePoint(wall.Point1),
+            Point2 = ClonePoint(wall.Point2)
+        };
+
+        /// <summary>Creates a deep copy of a powerup for render snapshots.</summary>
+        private static Powerup ClonePowerup(Powerup powerup) => new()
+        {
+            Id = powerup.Id,
+            Location = ClonePoint(powerup.Location),
+            Died = powerup.Died
+        };
+
+        /// <summary>Creates a deep copy of a point for render snapshots.</summary>
+        private static Point2D? ClonePoint(Point2D? point) =>
+            point == null ? null : new Point2D(point.X, point.Y);
 
         /// <summary>
         /// Merges non-null fields from an incoming update into the existing snake record.

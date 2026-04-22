@@ -134,9 +134,10 @@ public class SnakeRenderer
         int vx, int vy, int vw, int vh, double elapsed, CameraState cam,
         SnakeSkin playerSkin, bool drawGrid, bool highQuality)
     {
-        var worldSize = gc.WorldSize ?? 2000;
-        var snakes = gc.GetSnakes();
-        var playerId = gc.PlayerId;
+        var snapshot = gc.GetRenderSnapshot();
+        var worldSize = snapshot.WorldSize ?? 2000;
+        var snakes = snapshot.Snakes;
+        var playerId = snapshot.PlayerId;
 
         Snake? centerSnake = null;
         if (centerTargetId.HasValue)
@@ -190,8 +191,8 @@ public class SnakeRenderer
             await DrawGrid(ctx, worldSize);
 
         await DrawDeathAnimations(ctx, elapsed, deathAnims);
-        await DrawWalls(ctx, gc, highQuality);
-        await DrawPowerups(ctx, gc, highQuality);
+        await DrawWalls(ctx, gc, snapshot.Walls, highQuality);
+        await DrawPowerups(ctx, snapshot.Powerups, highQuality);
         await DrawSnakes(ctx, snakes, playerId, deathAnims, showDeath, playerSkin);
 
         await ctx.RestoreAsync();
@@ -314,9 +315,8 @@ public class SnakeRenderer
     // ==================== Walls ====================
 
     /// <summary>Draws all wall segments, using high-quality brick rendering when enabled.</summary>
-    private async Task DrawWalls(Canvas2DContext ctx, GameController gc, bool highQuality)
+    private async Task DrawWalls(Canvas2DContext ctx, GameController gc, IReadOnlyCollection<Wall> walls, bool highQuality)
     {
-        var walls = gc.GetWalls();
         const int bs = BrickSize;
 
         if (!highQuality)
@@ -483,11 +483,11 @@ public class SnakeRenderer
     // ==================== Powerups ====================
 
     /// <summary>Draws all active powerups with optional pulse and pop-in animation.</summary>
-    private async Task DrawPowerups(Canvas2DContext ctx, GameController gc, bool highQuality)
+    private async Task DrawPowerups(Canvas2DContext ctx, IReadOnlyCollection<Powerup> powerups, bool highQuality)
     {
         var now = DateTime.UtcNow;
         var activePowerupIds = new HashSet<int>();
-        foreach (var p in gc.GetPowerups())
+        foreach (var p in powerups)
         {
             if (p.Location == null || p.Died) continue;
 

@@ -215,6 +215,9 @@ else
     /// <summary>Target milliseconds per frame (~60 FPS).</summary>
     private const int FrameDelayMs = 16;
 
+    /// <summary>Minimum number of render frames to wait before sending another queued move.</summary>
+    private const int MoveSendCooldownFrames = 1;
+
     // ==================== Private Fields ====================
 
     /// <summary>Canvas renderer responsible for all drawing operations.</summary>
@@ -781,7 +784,7 @@ else
     /// </summary>
     private static string? GetSnakeHeading(GameController gc)
     {
-        var snake = gc.GetPlayerSnake();
+        var snake = gc.GetRenderSnapshot().PlayerSnake;
         if (snake?.Body == null || snake.Body.Count < 2) return null;
         var head = snake.Body[^1];
         var neck = snake.Body[^2];
@@ -1157,13 +1160,16 @@ else
                 frameSw.Restart();
                 try
                 {
+                    var p1Snapshot = GameController.GetRenderSnapshot();
+                    var p2Snapshot = _splitScreen && _p2Game != null ? _p2Game.GetRenderSnapshot() : null;
+
                     // P1 move — skip one frame after sending so the server
                     // processes each turn before receiving the next one.
                     if (_p1MoveCooldown > 0) _p1MoveCooldown--;
                     else
                     {
                         var move1 = DequeueMove(_p1MoveQueue, _p1MoveLock, GameController, ref _p1LastSentDir);
-                        if (move1 != null) { _ = GameController.SendMoveAsync(move1); _p1MoveCooldown = 3; }
+                        if (move1 != null) { _ = GameController.SendMoveAsync(move1); _p1MoveCooldown = MoveSendCooldownFrames; }
                     }
 
                     // P2 move
@@ -1173,16 +1179,16 @@ else
                         else
                         {
                             var move2 = DequeueMove(_p2MoveQueue, _p2MoveLock, _p2Game, ref _p2LastSentDir);
-                            if (move2 != null) { _ = _p2Game.SendMoveAsync(move2); _p2MoveCooldown = 3; }
+                            if (move2 != null) { _ = _p2Game.SendMoveAsync(move2); _p2MoveCooldown = MoveSendCooldownFrames; }
                         }
                     }
 
                     await DrawFrame();
 
                     // Mark players ready once their snake has been rendered
-                    if (!_p1Ready && GameController.GetPlayerSnake()?.Body?.Count > 0)
+                    if (!_p1Ready && p1Snapshot.PlayerSnake?.Body?.Count > 0)
                         _p1Ready = true;
-                    if (!_p2Ready && _p2Game?.GetPlayerSnake()?.Body?.Count > 0)
+                    if (!_p2Ready && p2Snapshot?.PlayerSnake?.Body?.Count > 0)
                         _p2Ready = true;
 
                     if (++tick % 6 == 0) await InvokeAsync(StateHasChanged);
@@ -1216,12 +1222,14 @@ else
 
         if (_splitScreen && _p2Game != null)
         {
+            var p1Snapshot = GameController.GetRenderSnapshot();
+            var p2Snapshot = _p2Game.GetRenderSnapshot();
             var halfW = _viewW / 2;
 
             // Resolve P1 center target
             if (_centerTargetSnakeId.HasValue)
             {
-                if (!GameController.GetSnakes().Any(s => s.Id == _centerTargetSnakeId.Value))
+                if (!p1Snapshot.Snakes.Any(s => s.Id == _centerTargetSnakeId.Value))
                     _centerTargetSnakeId = null;
             }
 
@@ -1255,10 +1263,12 @@ else
         }
         else
         {
+            var p1Snapshot = GameController.GetRenderSnapshot();
+
             // Resolve center target
             if (_centerTargetSnakeId.HasValue)
             {
-                if (!GameController.GetSnakes().Any(s => s.Id == _centerTargetSnakeId.Value))
+                if (!p1Snapshot.Snakes.Any(s => s.Id == _centerTargetSnakeId.Value))
                     _centerTargetSnakeId = null;
             }
 
