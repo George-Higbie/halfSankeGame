@@ -19,7 +19,7 @@ public static class Constants
 
 	public const int WallWidth = 50;
 
-	public const float SnakeSpeed = 3f;
+	public const float SnakeSpeed = 1.5f;
 
 	public const int MaxHP = 3;
 
@@ -27,7 +27,7 @@ public static class Constants
 
 	public const int MaxPowerups = 20;
 
-	public const int GrowthFrames = 12;
+	public const int GrowthFrames = 24;
 
 	public const float ViewScale = 1f;
 
@@ -141,7 +141,7 @@ public class Snake
 
 	public int NumSegments => body.Count - 1;
 
-	public float speed { get; set; } = 3f;
+	public float speed { get; set; } = Constants.SnakeSpeed;
 
 	public int growing { get; set; }
 
@@ -611,13 +611,13 @@ public class Wall
 }
 public class World
 {
-	private const uint SpawnSafetyFrames = 60u;
+	private const uint SpawnSafetyFrames = 120u;
 	private const int DeathDropGrowthUnitsPerGroup = 4;
 	private const double DeathDropLengthPerGrowthUnit = Constants.GrowthFrames * Constants.SnakeSpeed;
 	private const int DeathDropMaxPowerupsPerBurst = 4;
-	private const uint DeathDropInitialDelayFrames = 12u;
+	private const uint DeathDropInitialDelayFrames = 24u;
 	private const double DeathExplosionSpeedUnitsPerSecond = 400.0;
-	private const double SimulationFramesPerSecond = 60.0;
+	private const double SimulationFramesPerSecond = 120.0;
 
 	private sealed class PendingDeathDrop
 	{
@@ -953,7 +953,7 @@ public class World
 
 		if (nextPowerup == 0)
 		{
-			nextPowerup = time + (uint)rand.Next(0, 67);
+			nextPowerup = time + (uint)rand.Next(0, 134);
 		}
 		if (nextPowerup <= time)
 		{
@@ -961,7 +961,7 @@ public class World
 			{
 				AddRandomPowerup();
 			}
-			nextPowerup = time + (uint)rand.Next(0, 67);
+			nextPowerup = time + (uint)rand.Next(0, 134);
 		}
 		_ = Size / 2;
 		foreach (Snake value in Snakes.Values)

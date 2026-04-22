@@ -164,13 +164,20 @@ else
     <div class="death-overlay" style="@(_splitScreen ? "right:50%; left:0;" : "")">
         <h1>GAME OVER</h1>
         <div class="death-scores">
-            <h3>High Scores</h3>
+            <h3>Global Top 10</h3>
             <ul>
-                @foreach (var s in GameController.GetSnakes().OrderByDescending(x => x.Score ?? 0).Take(5))
+                @foreach (var s in _globalTopScores)
                 {
                     <li>
-                        <span>@(s.Name ?? "Anonymous")</span>
-                        <span>@(s.Score ?? 0)</span>
+                        <span>@(string.IsNullOrWhiteSpace(s.PlayerName) ? "Anonymous" : s.PlayerName)</span>
+                        <span>@s.MaxScore</span>
+                    </li>
+                }
+                @if (_globalTopScores.Count == 0)
+                {
+                    <li>
+                        <span>No recorded scores yet</span>
+                        <span>0</span>
                     </li>
                 }
             </ul>
@@ -184,13 +191,20 @@ else
     <div class="death-overlay" style="left:50%; right:0;">
         <h1>GAME OVER</h1>
         <div class="death-scores">
-            <h3>High Scores</h3>
+            <h3>Global Top 10</h3>
             <ul>
-                @foreach (var s in (_p2Game?.GetSnakes() ?? Array.Empty<Snake>()).OrderByDescending(x => x.Score ?? 0).Take(5))
+                @foreach (var s in _globalTopScores)
                 {
                     <li>
-                        <span>@(s.Name ?? "Anonymous")</span>
-                        <span>@(s.Score ?? 0)</span>
+                        <span>@(string.IsNullOrWhiteSpace(s.PlayerName) ? "Anonymous" : s.PlayerName)</span>
+                        <span>@s.MaxScore</span>
+                    </li>
+                }
+                @if (_globalTopScores.Count == 0)
+                {
+                    <li>
+                        <span>No recorded scores yet</span>
+                        <span>0</span>
                     </li>
                 }
             </ul>
@@ -253,18 +267,6 @@ else
     /// <summary>World Y to center the camera on while the death overlay is shown.</summary>
     private int _frozenCameraY;
 
-    /// <summary>Buffered direction commands waiting to be sent (max 2).</summary>
-    private readonly List<string> _p1MoveQueue = new();
-
-    /// <summary>Synchronization lock protecting <see cref="_p1MoveQueue"/>.</summary>
-    private readonly object _p1MoveLock = new();
-
-    /// <summary>Last direction sent to the server, used for 180-degree rejection.</summary>
-    private string? _p1LastSentDir;
-
-    /// <summary>Frames remaining before the next queued move can be sent (cooldown timer).</summary>
-    private int _p1MoveCooldown;
-
     /// <summary>Snake ID to follow with the camera (spectator mode), or null for own snake.</summary>
     private int? _centerTargetSnakeId;
 
@@ -287,18 +289,6 @@ else
 
     /// <summary>World Y to center P2's camera on while the death overlay is shown.</summary>
     private int _p2FrozenCamY;
-
-    /// <summary>Buffered direction commands for P2 waiting to be sent (max 2).</summary>
-    private readonly List<string> _p2MoveQueue = new();
-
-    /// <summary>Synchronization lock protecting <see cref="_p2MoveQueue"/>.</summary>
-    private readonly object _p2MoveLock = new();
-
-    /// <summary>Last direction P2 sent to the server, used for 180-degree rejection.</summary>
-    private string? _p2LastSentDir;
-
-    /// <summary>Frames remaining before P2's next queued move can be sent.</summary>
-    private int _p2MoveCooldown;
 
     /// <summary>Set to true once the server sends P2's first body, enabling input.</summary>
     private volatile bool _p2Ready;
@@ -324,6 +314,9 @@ else
 
     /// <summary>Open game sessions discovered from the score database.</summary>
     private readonly List<LiveGameSession> _openGames = [];
+
+    /// <summary>Cached all-time leaderboard rows shown in the death overlay.</summary>
+    private IReadOnlyList<GlobalHighScoreEntry> _globalTopScores = [];
 
     /// <summary>Currently selected game ID from the open-games list.</summary>
     private int? _selectedGameId;
@@ -425,6 +418,7 @@ else
         _ = Task.Run(() => RenderLoopAsync(_renderCts.Token));
 
         await RefreshOpenGamesAsync();
+        await RefreshGlobalTopScoresAsync();
 
         NetworkController.OnDisconnected += () => _ = InvokeAsync(() => { _status = "Disconnected"; StateHasChanged(); });
         _p2Network.OnDisconnected += () => _ = InvokeAsync(() => { _p2Status = "Disconnected"; StateHasChanged(); });
@@ -555,11 +549,7 @@ else
                 NavigateMenu(ref _p1MenuIndex, P1MenuMax, wasdDir, isP1: true);
                 _ = InvokeAsync(StateHasChanged);
             }
-            else
-            {
-                if (_showDeathScreen || !_p1Ready) return;
-                EnqueueMove(_p1MoveQueue, _p1MoveLock, wasdDir);
-            }
+            // Movement for WASD when sidebar is closed is handled by the browser-side JS buffer.
             return;
         }
 
@@ -579,11 +569,7 @@ else
                 NavigateMenu(ref _p2MenuIndex, P2MenuMax, arrowDir, isP1: false);
                 _ = InvokeAsync(StateHasChanged);
             }
-            else
-            {
-                if (_p2ShowDeath || !_p2Ready || _p2Game == null) return;
-                EnqueueMove(_p2MoveQueue, _p2MoveLock, arrowDir);
-            }
+            // P2 movement when sidebar is closed is handled by the browser-side JS buffer.
         }
         else
         {
@@ -592,12 +578,31 @@ else
                 NavigateMenu(ref _p1MenuIndex, P1MenuMax, arrowDir, isP1: true);
                 _ = InvokeAsync(StateHasChanged);
             }
-            else
-            {
-                if (_showDeathScreen || !_p1Ready) return;
-                EnqueueMove(_p1MoveQueue, _p1MoveLock, arrowDir);
-            }
+            // P1 movement when sidebar is closed is handled by the browser-side JS buffer.
         }
+    }
+
+    /// <summary>
+    /// Receives a pre-validated direction move from the browser-side JS move buffer
+    /// and forwards it directly to the game server. JS owns buffering and 180° rejection;
+    /// this method is the thin C# transport layer.
+    /// </summary>
+    /// <param name="player">"p1" or "p2".</param>
+    /// <param name="dir">Direction string: "up", "down", "left", or "right".</param>
+    [JSInvokable]
+    public Task SendDirectionMove(string player, string dir)
+    {
+        if (player == "p1")
+        {
+            if (_showDeathScreen || !_p1Ready || !GameController.PlayerId.HasValue) return Task.CompletedTask;
+            return GameController.SendMoveAsync(dir);
+        }
+        if (player == "p2" && _splitScreen && _p2Game != null)
+        {
+            if (_p2ShowDeath || !_p2Ready || !_p2Game.PlayerId.HasValue) return Task.CompletedTask;
+            return _p2Game.SendMoveAsync(dir);
+        }
+        return Task.CompletedTask;
     }
 
     /// <summary>
@@ -749,8 +754,10 @@ else
             bool firstIs180 = heading != null && _opposites.TryGetValue(first, out var o1) && o1 == heading;
             bool pairCancels = _opposites.TryGetValue(first, out var fo) && fo == second;
 
-            // Two inputs that undo each other (e.g. down+up) — discard both.
-            if (pairCancels)
+            // Two inputs that undo each other AND the first is already an invalid 180° —
+            // discard both (net result: no change). If the first is valid, fall through
+            // and send it; the second will be dropped on the next dequeue as a 180°.
+            if (pairCancels && firstIs180)
             {
                 queue.Clear();
                 return null;
@@ -801,6 +808,24 @@ else
         catch (Exception ex)
         {
             _dbStatusMessage = "Unable to load games from the database.";
+            SetFatalError("Database Unavailable", ex.Message);
+        }
+
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    /// <summary>Loads the all-time top scores used by the death overlay leaderboard.</summary>
+    private Task RefreshGlobalTopScoresAsync()
+    {
+        try
+        {
+            _globalTopScores = ScoreDatabase.GetGlobalTopScores(10);
+        }
+        catch (Exception ex)
+        {
+            _globalTopScores = [];
+            _dbStatusMessage = "Unable to load global leaderboard scores.";
             SetFatalError("Database Unavailable", ex.Message);
         }
 
@@ -867,8 +892,6 @@ else
         if (isP1)
         {
             _showDeathScreen = false;
-            lock (_p1MoveLock) _p1MoveQueue.Clear();
-            _p1LastSentDir = null;
             _p1Ready = false;
             if (_splitScreen) _p1SidebarOpen = false;
             else _sidebarOpen = false;
@@ -879,8 +902,6 @@ else
         {
             if (_p2Game == null) return;
             _p2ShowDeath = false;
-            lock (_p2MoveLock) _p2MoveQueue.Clear();
-            _p2LastSentDir = null;
             _p2Ready = false;
             _renderer.ClearWallCache(_p2Game);
             _p2SidebarOpen = false;
@@ -988,8 +1009,6 @@ else
     {
         _showDeathScreen = false;
         if (_splitScreen) _p1SidebarOpen = false; else _sidebarOpen = false;
-        lock (_p1MoveLock) _p1MoveQueue.Clear();
-        _p1LastSentDir = null;
         _ = GameController.SendMoveAsync("respawn");
         _ = InvokeAsync(StateHasChanged);
     }
@@ -999,8 +1018,6 @@ else
     {
         _p2ShowDeath = false;
         _p2SidebarOpen = false;
-        lock (_p2MoveLock) _p2MoveQueue.Clear();
-        _p2LastSentDir = null;
         if (_p2Game != null) _ = _p2Game.SendMoveAsync("respawn");
         _ = InvokeAsync(StateHasChanged);
     }
@@ -1022,7 +1039,11 @@ else
             _frozenCameraY = head.Y;
         }
 
-        _ = InvokeAsync(StateHasChanged);
+        _ = InvokeAsync(async () =>
+        {
+            await RefreshGlobalTopScoresAsync();
+            StateHasChanged();
+        });
     }
 
     /// <summary>Handles the P2 death event: freezes camera and shows the death overlay.</summary>
@@ -1040,7 +1061,11 @@ else
             _p2FrozenCamY = head.Y;
         }
 
-        _ = InvokeAsync(StateHasChanged);
+        _ = InvokeAsync(async () =>
+        {
+            await RefreshGlobalTopScoresAsync();
+            StateHasChanged();
+        });
     }
 
     // ==================== Render Loop ====================
@@ -1064,25 +1089,9 @@ else
                     var p1Snapshot = GameController.GetRenderSnapshot();
                     var p2Snapshot = _splitScreen && _p2Game != null ? _p2Game.GetRenderSnapshot() : null;
 
-                    // P1 move — skip one frame after sending so the server
-                    // processes each turn before receiving the next one.
-                    if (_p1MoveCooldown > 0) _p1MoveCooldown--;
-                    else
-                    {
-                        var move1 = DequeueMove(_p1MoveQueue, _p1MoveLock, GameController, ref _p1LastSentDir);
-                        if (move1 != null) { _ = GameController.SendMoveAsync(move1); _p1MoveCooldown = MoveSendCooldownFrames; }
-                    }
-
-                    // P2 move
-                    if (_splitScreen && _p2Game != null)
-                    {
-                        if (_p2MoveCooldown > 0) _p2MoveCooldown--;
-                        else
-                        {
-                            var move2 = DequeueMove(_p2MoveQueue, _p2MoveLock, _p2Game, ref _p2LastSentDir);
-                            if (move2 != null) { _ = _p2Game.SendMoveAsync(move2); _p2MoveCooldown = MoveSendCooldownFrames; }
-                        }
-                    }
+                    // Move sending is now handled entirely by the browser-side JS buffer.
+                    // JS reads headings from latestRenderState, validates 180° turns,
+                    // applies double-key reordering, and calls SendDirectionMove() directly.
 
                     PublishBrowserRenderStateAsync(p1Snapshot, p2Snapshot);
                     await RefreshSkinPreviewsAsync();
@@ -1127,6 +1136,10 @@ else
         renderKeyBuilder.Add(_showScoreboard);
         renderKeyBuilder.Add(_showDeathScreen);
         renderKeyBuilder.Add(_p2ShowDeath);
+        renderKeyBuilder.Add(_splitScreen ? _p1SidebarOpen : _sidebarOpen);
+        renderKeyBuilder.Add(_p2SidebarOpen);
+        renderKeyBuilder.Add(_p1Ready);
+        renderKeyBuilder.Add(_p2Ready);
         renderKeyBuilder.Add(_centerTargetSnakeId);
         renderKeyBuilder.Add(_p1SkinIndex);
         renderKeyBuilder.Add(_p2SkinIndex);
@@ -1154,6 +1167,10 @@ else
             drawGrid = _drawGrid,
             highQualityTextures = _highQualityTextures,
             showScoreboard = _showScoreboard && GameController.PlayerId.HasValue,
+            p1SidebarOpen = _splitScreen ? _p1SidebarOpen : _sidebarOpen,
+            p2SidebarOpen = _p2SidebarOpen,
+            p1CanMove = !_showDeathScreen && _p1Ready && GameController.PlayerId.HasValue,
+            p2CanMove = !_p2ShowDeath && _p2Ready && (_p2Game?.PlayerId.HasValue == true),
             p1 = new
             {
                 version = p1Snapshot.Version,

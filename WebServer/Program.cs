@@ -104,6 +104,15 @@ static void RouteRequest(NetworkStream stream, string method, string target, str
 		return;
 	}
 
+	if (string.Equals(uri.AbsolutePath, "/api/scores/top", StringComparison.OrdinalIgnoreCase)
+		&& string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase))
+	{
+		int limit = GetPositiveQueryInt(uri.Query, "limit") ?? 10;
+		limit = Math.Clamp(limit, 1, 100);
+		WriteJsonResponse(stream, "200 OK", ScoreDataAccess.GetGlobalTopScores(limit));
+		return;
+	}
+
 	if (string.Equals(uri.AbsolutePath, "/api/games/start", StringComparison.OrdinalIgnoreCase)
 		&& string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase))
 	{
@@ -228,6 +237,30 @@ static int? GetGameId(string query)
 	return null;
 }
 
+static int? GetPositiveQueryInt(string query, string key)
+{
+	if (string.IsNullOrWhiteSpace(query))
+	{
+		return null;
+	}
+
+	string trimmed = query.TrimStart('?');
+	string[] pairs = trimmed.Split('&', StringSplitOptions.RemoveEmptyEntries);
+	foreach (string pair in pairs)
+	{
+		string[] kv = pair.Split('=', 2);
+		if (kv.Length == 2
+			&& string.Equals(kv[0], key, StringComparison.OrdinalIgnoreCase)
+			&& int.TryParse(kv[1], out int value)
+			&& value > 0)
+		{
+			return value;
+		}
+	}
+
+	return null;
+}
+
 static string BuildAllGamesPage()
 {
 	List<GameRow> games = ScoreDataAccess.GetGames();
@@ -302,6 +335,8 @@ static void WriteResponse(NetworkStream stream, string status, string body)
 internal sealed record GameRow(int GameId, DateTime StartTime, DateTime? EndTime);
 
 internal sealed record PlayerRow(int PlayerId, string PlayerName, int MaxScore, DateTime EnterTime, DateTime? LeaveTime);
+
+internal sealed record TopScoreRow(string PlayerName, int MaxScore, DateTime EnterTime, int GameId, int PlayerId);
 
 internal sealed record LiveGameSession(int GameId, string Host, int Port, DateTime StartTime);
 internal sealed record CreateGameRequest(DateTime StartTime, string? Host, int? Port);
@@ -443,6 +478,8 @@ internal static class ScoreDataAccess
 		cmd.Parameters.AddWithValue("@gameId", gameId);
 		cmd.Parameters.AddWithValue("@playerId", playerId);
 		cmd.ExecuteNonQuery();
+
+		TryCloseGameIfNoActivePlayers(conn, gameId, leaveTime);
 	}
 
 	public static List<LiveGameSession> GetOpenGameSessions()
@@ -450,6 +487,8 @@ internal static class ScoreDataAccess
 		List<LiveGameSession> sessions = [];
 		using MySqlConnection conn = new(ConnectionString);
 		conn.Open();
+
+		CloseAllEmptyActiveGames(conn, DateTime.Now);
 
 		using MySqlCommand cmd = conn.CreateCommand();
 		cmd.CommandText = @"
@@ -521,6 +560,71 @@ internal static class ScoreDataAccess
 		}
 
 		return players;
+	}
+
+	private static void TryCloseGameIfNoActivePlayers(MySqlConnection conn, int gameId, DateTime closeTime)
+	{
+		using MySqlCommand cmd = conn.CreateCommand();
+		cmd.CommandText = @"
+			UPDATE Games g
+			SET EndTime = COALESCE(EndTime, @closeTime),
+				IsActive = 0
+			WHERE g.GameId = @gameId
+			  AND g.IsActive = 1
+			  AND NOT EXISTS (
+				  SELECT 1
+				  FROM Players p
+				  WHERE p.GameId = g.GameId
+					AND p.LeaveTime IS NULL
+			  );";
+		cmd.Parameters.AddWithValue("@closeTime", closeTime.ToString("yyyy-MM-dd H:mm:ss"));
+		cmd.Parameters.AddWithValue("@gameId", gameId);
+		cmd.ExecuteNonQuery();
+	}
+
+	private static void CloseAllEmptyActiveGames(MySqlConnection conn, DateTime closeTime)
+	{
+		using MySqlCommand cmd = conn.CreateCommand();
+		cmd.CommandText = @"
+			UPDATE Games g
+			SET EndTime = COALESCE(EndTime, @closeTime),
+				IsActive = 0
+			WHERE g.IsActive = 1
+			  AND NOT EXISTS (
+				  SELECT 1
+				  FROM Players p
+				  WHERE p.GameId = g.GameId
+					AND p.LeaveTime IS NULL
+			  );";
+		cmd.Parameters.AddWithValue("@closeTime", closeTime.ToString("yyyy-MM-dd H:mm:ss"));
+		cmd.ExecuteNonQuery();
+	}
+
+	public static List<TopScoreRow> GetGlobalTopScores(int limit)
+	{
+		List<TopScoreRow> topScores = [];
+		using MySqlConnection conn = new(ConnectionString);
+		conn.Open();
+
+		using MySqlCommand cmd = conn.CreateCommand();
+		cmd.CommandText = $@"
+			SELECT PlayerName, MaxScore, EnterTime, GameId, PlayerId
+			FROM Players
+			ORDER BY MaxScore DESC, EnterTime ASC, EntryId ASC
+			LIMIT {Math.Clamp(limit, 1, 100)};";
+
+		using MySqlDataReader reader = cmd.ExecuteReader();
+		while (reader.Read())
+		{
+			string playerName = reader.GetString("PlayerName");
+			int maxScore = reader.GetInt32("MaxScore");
+			DateTime enterTime = reader.GetDateTime("EnterTime");
+			int gameId = reader.GetInt32("GameId");
+			int playerId = reader.GetInt32("PlayerId");
+			topScores.Add(new TopScoreRow(playerName, maxScore, enterTime, gameId, playerId));
+		}
+
+		return topScores;
 	}
 
 	private static void EnsureColumnExists(MySqlConnection conn, string tableName, string columnName, string alterSql)

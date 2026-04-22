@@ -21,6 +21,11 @@ namespace GUI.Components.Controllers
     public sealed record LiveGameSession(int GameId, string Host, int Port, DateTime StartTime);
 
     /// <summary>
+    /// Single all-time score row used for global leaderboards.
+    /// </summary>
+    public sealed record GlobalHighScoreEntry(string PlayerName, int MaxScore, DateTime EnterTime, int GameId, int PlayerId);
+
+    /// <summary>
     /// Persists live game/session data into the PS10 score database.
     /// </summary>
     public class ScoreDatabaseController
@@ -248,6 +253,8 @@ namespace GUI.Components.Controllers
                 cmd.Parameters.AddWithValue("@gameId", gameId);
                 cmd.Parameters.AddWithValue("@playerId", playerId);
                 cmd.ExecuteNonQuery();
+
+                TryCloseGameIfNoActivePlayers(conn, gameId, leaveTime);
             }
             catch (Exception ex)
             {
@@ -270,6 +277,8 @@ namespace GUI.Components.Controllers
             {
                 using var conn = new MySqlConnection(ConnectionString);
                 conn.Open();
+
+                CloseAllEmptyActiveGames(conn, DateTime.Now);
 
                 using var cmd = conn.CreateCommand();
                 cmd.CommandText = @"
@@ -298,6 +307,89 @@ namespace GUI.Components.Controllers
             }
 
             return sessions;
+        }
+
+        /// <summary>
+        /// Returns the highest all-time scores across all games.
+        /// </summary>
+        /// <param name="limit">Maximum number of rows to return.</param>
+        public IReadOnlyList<GlobalHighScoreEntry> GetGlobalTopScores(int limit = 10)
+        {
+            int safeLimit = Math.Clamp(limit, 1, 100);
+
+            if (_relayClient != null)
+            {
+                return RelayGetGlobalTopScores(safeLimit);
+            }
+
+            var topScores = new List<GlobalHighScoreEntry>();
+            try
+            {
+                using var conn = new MySqlConnection(ConnectionString);
+                conn.Open();
+
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText = $@"
+                    SELECT PlayerName, MaxScore, EnterTime, GameId, PlayerId
+                    FROM Players
+                    ORDER BY MaxScore DESC, EnterTime ASC, EntryId ASC
+                    LIMIT {safeLimit};";
+
+                using var reader = cmd.ExecuteReader();
+                while (reader.Read())
+                {
+                    var playerName = reader.GetString("PlayerName");
+                    var maxScore = reader.GetInt32("MaxScore");
+                    var enterTime = reader.GetDateTime("EnterTime");
+                    var gameId = reader.GetInt32("GameId");
+                    var playerId = reader.GetInt32("PlayerId");
+                    topScores.Add(new GlobalHighScoreEntry(playerName, maxScore, enterTime, gameId, playerId));
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to query global top scores.");
+            }
+
+            return topScores;
+        }
+
+        private static void TryCloseGameIfNoActivePlayers(MySqlConnection conn, int gameId, DateTime closeTime)
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = @"
+                UPDATE Games g
+                SET EndTime = COALESCE(EndTime, @closeTime),
+                    IsActive = 0
+                WHERE g.GameId = @gameId
+                  AND g.IsActive = 1
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM Players p
+                      WHERE p.GameId = g.GameId
+                        AND p.LeaveTime IS NULL
+                  );";
+            cmd.Parameters.AddWithValue("@closeTime", closeTime.ToString("yyyy-MM-dd H:mm:ss"));
+            cmd.Parameters.AddWithValue("@gameId", gameId);
+            cmd.ExecuteNonQuery();
+        }
+
+        private static void CloseAllEmptyActiveGames(MySqlConnection conn, DateTime closeTime)
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = @"
+                UPDATE Games g
+                SET EndTime = COALESCE(EndTime, @closeTime),
+                    IsActive = 0
+                WHERE g.IsActive = 1
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM Players p
+                      WHERE p.GameId = g.GameId
+                        AND p.LeaveTime IS NULL
+                  );";
+            cmd.Parameters.AddWithValue("@closeTime", closeTime.ToString("yyyy-MM-dd H:mm:ss"));
+            cmd.ExecuteNonQuery();
         }
 
         private int? RelayCreateGame(DateTime startTime, string? host, int? port)
@@ -370,6 +462,32 @@ namespace GUI.Components.Controllers
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Failed to fetch open game sessions from score relay.");
+                return [];
+            }
+        }
+
+        private IReadOnlyList<GlobalHighScoreEntry> RelayGetGlobalTopScores(int limit)
+        {
+            if (_relayClient == null)
+            {
+                return [];
+            }
+
+            try
+            {
+                using HttpResponseMessage response = _relayClient.GetAsync($"/api/scores/top?limit={limit}").GetAwaiter().GetResult();
+                response.EnsureSuccessStatusCode();
+
+                string json = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                List<GlobalHighScoreEntry>? scores = JsonSerializer.Deserialize<List<GlobalHighScoreEntry>>(json, new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true,
+                });
+                return scores ?? [];
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to fetch global top scores from score relay.");
                 return [];
             }
         }

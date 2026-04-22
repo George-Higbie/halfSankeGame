@@ -76,6 +76,28 @@ public sealed class ScoreDatabaseRelayIntegrationTests
         relay.AssertSaw("GET", "/api/games/open");
     }
 
+    [TestMethod]
+    public void ScoreDatabaseController_RelayMode_GetGlobalTopScores_ReturnsTopRows()
+    {
+        using var relay = new FakeRelayServer();
+        relay.TopScores =
+        [
+            new RelayTopScoreDto("Alice", 42, DateTime.UtcNow.AddMinutes(-5), 12, 1),
+            new RelayTopScoreDto("Bob", 37, DateTime.UtcNow.AddMinutes(-2), 13, 4),
+        ];
+
+        Environment.SetEnvironmentVariable("SCORE_RELAY_BASE_URL", relay.BaseUrl);
+        var scoreDb = new ScoreDatabaseController();
+
+        IReadOnlyList<GlobalHighScoreEntry> scores = scoreDb.GetGlobalTopScores(10);
+
+        Assert.HasCount(2, scores);
+        Assert.AreEqual("Alice", scores[0].PlayerName);
+        Assert.AreEqual(42, scores[0].MaxScore);
+        Assert.AreEqual(13, scores[1].GameId);
+        relay.AssertSaw("GET", "/api/scores/top");
+    }
+
     private sealed class FakeRelayServer : IDisposable
     {
         private readonly HttpListener _listener;
@@ -89,6 +111,8 @@ public sealed class ScoreDatabaseRelayIntegrationTests
         public int CreateGameId { get; set; } = 321;
 
         public RelayGameDto[] OpenGames { get; set; } = [];
+
+        public RelayTopScoreDto[] TopScores { get; set; } = [];
 
         public FakeRelayServer()
         {
@@ -163,6 +187,12 @@ public sealed class ScoreDatabaseRelayIntegrationTests
                 return;
             }
 
+            if (method == "GET" && path == "/api/scores/top")
+            {
+                WriteJson(context.Response, 200, TopScores);
+                return;
+            }
+
             if (method == "POST" && path == "/api/games/start")
             {
                 WriteJson(context.Response, 200, new { gameId = CreateGameId });
@@ -213,4 +243,6 @@ public sealed class ScoreDatabaseRelayIntegrationTests
     private sealed record RelayRequest(string Method, string Path, string Body);
 
     private sealed record RelayGameDto(int GameId, string Host, int Port, DateTime StartTime);
+
+    private sealed record RelayTopScoreDto(string PlayerName, int MaxScore, DateTime EnterTime, int GameId, int PlayerId);
 }

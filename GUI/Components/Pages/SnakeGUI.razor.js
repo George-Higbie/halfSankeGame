@@ -29,7 +29,7 @@ let latestRenderStateReceivedAt = 0;
 /** @type {number} Estimated milliseconds between snapshots for interpolation. */
 let interpolationWindowMs = 33;
 
-const INTERPOLATION_MIN_MS = 16;
+const INTERPOLATION_MIN_MS = 8;
 const INTERPOLATION_MAX_MS = 150;
 const INTERPOLATION_EMA_FACTOR = 0.20;
 const MAX_EXTRAPOLATION_ALPHA = 1.0;
@@ -273,8 +273,8 @@ window.setSnakeRenderState = (state) => {
         for (const snake of state.p1.snakes) {
             if (snake && snake.snake === state.p1?.playerId && Array.isArray(snake.body) && snake.body.length > 0) {
                 const headPos = snake.body[snake.body.length - 1];
-                updateSnakePredictionState(snake.snake, headPos, receivedAt);
                 const reconciliation = reconcileSnakePosition(snake.snake, headPos, receivedAt);
+                updateSnakePredictionState(snake.snake, headPos, receivedAt);
                 // Log if server position was outside tolerance (potential lag/desync).
                 if (!reconciliation.withinTolerance) {
                     // Snap to server position but log the discrepancy.
@@ -426,7 +426,9 @@ function updateSnakePredictionState(snakeId, headPos, now) {
 
     state.lastServerHeadPos = { X: headPos.X, Y: headPos.Y };
     state.lastServerUpdateTime = now;
-    state.predictedHeadPos = { X: headPos.X, Y: headPos.Y };
+    if (!state.predictedHeadPos) {
+        state.predictedHeadPos = { X: headPos.X, Y: headPos.Y };
+    }
 }
 
 /**
@@ -599,50 +601,34 @@ function interpolateSnakeHeadFallback(previousSnake, currentSnake, alpha) {
 }
 
 /**
- * Local-player interpolation prioritizes control accuracy on turns.
- * - If the direction axis changes, render the latest authoritative snapshot.
- * - Otherwise interpolate only the head (not full body topology).
+ * Local-player interpolation: snap immediately on turns, smooth on straight-line movement.
+ * Interpolating on turns causes the visible overshoot-then-snap feel, so we skip it.
+ * On straight lines the head is blended so motion is smooth between 8ms snapshots.
  */
 function interpolateLocalPlayerSnake(previousSnake, currentSnake, alpha) {
-    // Don't snap on turn detection; blend smoothly instead to avoid snappiness.
-    // Body topology may change slightly, but it's smoother than an instant snap.
-
-    const currentBody = Array.isArray(currentSnake.body) ? currentSnake.body : [];
-    if (currentBody.length === 0) {
+    // On a direction-axis change, trust the latest snapshot immediately — no blending.
+    if (isDirectionTurnTransition(previousSnake.dir, currentSnake.dir)) {
         return currentSnake;
     }
+
+    const currentBody = Array.isArray(currentSnake.body) ? currentSnake.body : [];
+    if (currentBody.length === 0) return currentSnake;
 
     const previousBody = Array.isArray(previousSnake.body) ? previousSnake.body : [];
     const currentHeadIndex = currentBody.length - 1;
     const previousHeadIndex = previousBody.length - 1;
-    if (previousHeadIndex < 0) {
-        return currentSnake;
-    }
+    if (previousHeadIndex < 0) return currentSnake;
 
     const body = currentBody.slice();
     const previousHead = previousBody[previousHeadIndex];
-    
-    // Use client-predicted head if it was within tolerance; otherwise use server's authoritative position.
-    const snakeId = currentSnake.snake;
-    const predictionState = snakePredictionStateById.get(snakeId);
-    const currentHead = predictionState?.predictedHeadPos || body[currentHeadIndex];
-    
-    const dx = currentHead.X - previousHead.X;
-    const dy = currentHead.Y - previousHead.Y;
-    const stepDistance = Math.hypot(dx, dy);
+    const currentHead = body[currentHeadIndex];
 
+    const stepDistance = Math.hypot(currentHead.X - previousHead.X, currentHead.Y - previousHead.Y);
     if (Number.isFinite(stepDistance) && stepDistance <= MAX_FALLBACK_HEAD_BLEND_DISTANCE) {
         body[currentHeadIndex] = interpolatePoint(previousHead, currentHead, alpha);
-    } else {
-        // Large jump detected (respawn, teleport, cheating); snap to current without blending.
-        body[currentHeadIndex] = currentHead;
     }
 
-    return {
-        ...currentSnake,
-        body,
-        dir: previousSnake.dir && currentSnake.dir ? interpolatePoint(previousSnake.dir, currentSnake.dir, alpha) : currentSnake.dir
-    };
+    return { ...currentSnake, body };
 }
 
 /**
@@ -736,6 +722,9 @@ function renderGameFrame(now) {
     if (canvasEl && !renderCtx) {
         renderCtx = canvasEl.getContext('2d');
     }
+
+    // Flush the JS-side move buffer first so input is processed before the frame draws.
+    tickJsMoveBuffers();
 
     const dt = Math.min(0.05, Math.max(0.001, (now - lastFrameAt) / 1000 || 0.016));
     lastFrameAt = now;
@@ -1690,12 +1679,331 @@ function clamp(value, min, max) {
     return Math.min(Math.max(value, min), max);
 }
 
+// ==================== CLIENT-SIDE MOVE BUFFER ====================
 /**
- * Global keydown listener (attached once). Routes keyboard events to C#:
- * - Shift keys always forwarded (respawn/connect shortcuts).
- * - Text input fields swallow most keys except Tab/Escape/Enter.
- * - Game keys (WASD, arrows, menu keys) are forwarded and have
- *   their browser defaults prevented.
+ * All movement validation, 180° rejection, and double-key reordering happen here
+ * in the browser, before any round-trip to Blazor/the game server. JS reads the
+ * current heading from latestRenderState and calls SendDirectionMove() with the
+ * final valid direction.
+ */
+
+const DIR_OPPOSITES_JS = { up: 'down', down: 'up', left: 'right', right: 'left' };
+
+/**
+ * Per-player move buffer: two-slot queue, lastSentDir, frame cooldown, and
+ * awaitingAck gate so we only consume next input after server confirms progression.
+ * Queue entries are { dir, atMs }.
+ */
+const p1JsMoveBuffer = { queue: [], lastSentDir: null, cooldown: 0, awaitingAckDir: null, awaitingAckFromHeading: null, awaitingAckFrames: 0, awaitingAckVersion: -1, lastSendAtMs: 0 };
+const p2JsMoveBuffer = { queue: [], lastSentDir: null, cooldown: 0, awaitingAckDir: null, awaitingAckFromHeading: null, awaitingAckFrames: 0, awaitingAckVersion: -1, lastSendAtMs: 0 };
+
+/** Safety bound to avoid indefinite ack lock if a move is dropped/rejected upstream. */
+const JS_ACK_TIMEOUT_FRAMES = 90;
+
+/**
+ * Max spacing between opposite + intermediary keys for a buffered 180 chain.
+ * "A couple of frames" at common refresh rates.
+ */
+const JS_BUFFERED_180_WINDOW_MS = 70;
+
+/**
+ * Max age for retaining an illegal-first input as a chain candidate.
+ * This is intentionally human-scale so rapid double-turn chains are preserved,
+ * while stale opposite-direction taps still age out quickly.
+ */
+const JS_INVALID_CHAIN_HOLD_MS = 250;
+
+/**
+ * Converts a server dir vector {X, Y} to a cardinal heading string.
+ * @param {{X:number,Y:number}|null} dir
+ * @returns {'up'|'down'|'left'|'right'|null}
+ */
+function headingFromDirVector(dir) {
+    if (!dir) return null;
+    const absX = Math.abs(dir.X || 0), absY = Math.abs(dir.Y || 0);
+    if (absX === 0 && absY === 0) return null;
+    if (absX >= absY) return dir.X > 0 ? 'right' : 'left';
+    return dir.Y > 0 ? 'down' : 'up';
+}
+
+/**
+ * Gets the player snake's heading from the latest render state.
+ * @param {'p1'|'p2'} vp - Viewport key.
+ * @returns {'up'|'down'|'left'|'right'|null}
+ */
+function getPlayerHeadingFromState(vp) {
+    const state = latestRenderState;
+    if (!state) return null;
+    const viewport = state[vp];
+    if (!viewport || !Array.isArray(viewport.snakes)) return null;
+    const snake = viewport.snakes.find(s => s.snake === viewport.playerId);
+    if (!snake || !snake.dir) return null;
+    return headingFromDirVector(snake.dir);
+}
+
+/**
+ * Enqueues a direction into a buffer (max 2 slots, no consecutive duplicates).
+ * @param {{queue:Array<{dir:string,atMs:number}>,lastSentDir:string|null,cooldown:number,awaitingAckDir:string|null}} buf
+ * @param {string} dir
+ */
+function jsMoveEnqueue(buf, dir) {
+    if (buf.queue.length >= 2) return;
+    if (buf.queue.length > 0 && buf.queue[buf.queue.length - 1].dir === dir) return;
+    buf.queue.push({ dir, atMs: performance.now() });
+}
+
+/**
+ * Returns true when a move is legal for the current heading.
+ * Disallows opposite (180°) and redundant same-direction inputs.
+ * @param {string} move
+ * @param {string|null} heading
+ * @returns {boolean}
+ */
+function isMoveLegalForHeading(move, heading) {
+    if (!heading) return true;
+    if (move === heading) return false;
+    return DIR_OPPOSITES_JS[move] !== heading;
+}
+
+/**
+ * Returns true when a move is exactly opposite to heading.
+ * @param {string} move
+ * @param {string|null} heading
+ * @returns {boolean}
+ */
+function isOppositeMove(move, heading) {
+    return !!heading && DIR_OPPOSITES_JS[move] === heading;
+}
+
+/**
+ * Selects the next buffered move using legality-first arbitration:
+ * - if first is legal, send first;
+ * - else if second is legal, send second and keep first queued;
+ * - else send nothing.
+ * This guarantees 90° + 90° buffered turns for 180° sequences.
+ * @param {{queue:Array<{dir:string,atMs:number}>,lastSentDir:string|null,cooldown:number,awaitingAckDir:string|null}} buf
+ * @param {string|null} heading - Current cardinal heading (from lastSentDir or server).
+ * @returns {string|null} Direction to send, or null.
+ */
+function jsSelectNextBufferedMove(buf, heading) {
+    if (buf.queue.length === 0) return null;
+
+    const nowMs = performance.now();
+
+    const first = buf.queue[0].dir;
+    if (isMoveLegalForHeading(first, heading)) {
+        buf.queue.shift();
+        buf.lastSentDir = first;
+        return first;
+    }
+
+    // Never retain same-direction no-op inputs; they should not replay after a turn.
+    if (heading && first === heading) {
+        buf.queue.shift();
+        return null;
+    }
+
+    // First is currently illegal. If there is no second key yet, keep it briefly as
+    // a potential chain candidate, then drop once stale.
+    if (buf.queue.length === 1) {
+        const firstAgeMs = nowMs - buf.queue[0].atMs;
+        const keepAsChainCandidate = firstAgeMs <= JS_INVALID_CHAIN_HOLD_MS;
+        if (!keepAsChainCandidate) {
+            buf.queue.shift();
+        }
+        return null;
+    }
+
+    if (buf.queue.length > 1) {
+        const second = buf.queue[1].dir;
+        if (isMoveLegalForHeading(second, heading)) {
+            // If first key is same-direction no-op, drop it and use legal second.
+            if (heading && first === heading) {
+                buf.queue.shift();
+                const legalNow = buf.queue.shift();
+                if (!legalNow) return null;
+                buf.lastSentDir = legalNow.dir;
+                return legalNow.dir;
+            }
+
+            const firstAgeMs = nowMs - buf.queue[0].atMs;
+            const chainDeltaMs = Math.abs(buf.queue[1].atMs - buf.queue[0].atMs);
+            const isBuffered180 = isOppositeMove(first, heading) && chainDeltaMs <= JS_BUFFERED_180_WINDOW_MS;
+
+            if (isBuffered180) {
+                // Illegal-first/legal-second is the classic buffered 180 setup.
+                // Send the legal intermediary turn now and keep the opposite
+                // input queued for replay after heading updates.
+                buf.queue.splice(1, 1);
+                buf.lastSentDir = second;
+                return second;
+            }
+
+            if (firstAgeMs <= JS_INVALID_CHAIN_HOLD_MS) {
+                // Not a buffered-180 pair: first is still illegal now, so prefer
+                // immediate legal input and discard illegal first.
+                buf.queue.shift();
+                const legalNow = buf.queue.shift();
+                if (!legalNow) return null;
+                buf.lastSentDir = legalNow.dir;
+                return legalNow.dir;
+            }
+
+            // First input is stale: drop it and use the current legal second.
+            buf.queue.shift();
+            const legalNow = buf.queue.shift();
+            if (!legalNow) return null;
+            buf.lastSentDir = legalNow.dir;
+            return legalNow.dir;
+        }
+
+        // Both first and second illegal for current heading: drop oldest stale input.
+        const firstAgeMs = nowMs - buf.queue[0].atMs;
+        if (firstAgeMs > JS_INVALID_CHAIN_HOLD_MS) {
+            buf.queue.shift();
+        }
+    }
+
+    return null;
+}
+
+/** Frames to wait between sends (one skipped frame preserves ordered two-step turns). */
+const JS_MOVE_COOLDOWN_FRAMES = 1;
+
+/**
+ * Called every rAF frame. Flushes queued moves for each player, respecting the
+ * per-player cooldown and the p1CanMove / p2CanMove flags from the render state.
+ */
+function tickJsMoveBuffers() {
+    const inst = window.theInstance;
+    if (!inst || !latestRenderState) return;
+
+    const p1CanMove = !!latestRenderState.p1CanMove;
+    const p2CanMove = !!latestRenderState.p2CanMove;
+    const splitScreen = !!latestRenderState.splitScreen;
+
+    // Clear buffers when the player can't move (dead, not connected, etc.)
+    if (!p1CanMove) {
+        p1JsMoveBuffer.queue.length = 0;
+        p1JsMoveBuffer.lastSentDir = null;
+        p1JsMoveBuffer.cooldown = 0;
+        p1JsMoveBuffer.awaitingAckDir = null;
+        p1JsMoveBuffer.awaitingAckFromHeading = null;
+        p1JsMoveBuffer.awaitingAckFrames = 0;
+        p1JsMoveBuffer.awaitingAckVersion = -1;
+        p1JsMoveBuffer.lastSendAtMs = 0;
+    }
+    if (!p2CanMove) {
+        p2JsMoveBuffer.queue.length = 0;
+        p2JsMoveBuffer.lastSentDir = null;
+        p2JsMoveBuffer.cooldown = 0;
+        p2JsMoveBuffer.awaitingAckDir = null;
+        p2JsMoveBuffer.awaitingAckFromHeading = null;
+        p2JsMoveBuffer.awaitingAckFrames = 0;
+        p2JsMoveBuffer.awaitingAckVersion = -1;
+        p2JsMoveBuffer.lastSendAtMs = 0;
+    }
+
+    // P1
+    if (p1CanMove) {
+        const serverVersion = Number.isFinite(latestRenderState?.p1?.version) ? latestRenderState.p1.version : -1;
+        const serverHeading = getPlayerHeadingFromState('p1');
+        const heading = serverHeading ?? p1JsMoveBuffer.lastSentDir;
+
+        if (p1JsMoveBuffer.awaitingAckDir) {
+            if (serverHeading) {
+                p1JsMoveBuffer.awaitingAckFrames++;
+            }
+            const ackByExactHeading = serverHeading === p1JsMoveBuffer.awaitingAckDir;
+            const ackByProgression = !!serverHeading
+                && !!p1JsMoveBuffer.awaitingAckFromHeading
+                && serverHeading !== p1JsMoveBuffer.awaitingAckFromHeading;
+            const ackByVersion = p1JsMoveBuffer.awaitingAckVersion >= 0
+                && serverVersion > p1JsMoveBuffer.awaitingAckVersion;
+            const ackByTimeout = p1JsMoveBuffer.awaitingAckFrames >= JS_ACK_TIMEOUT_FRAMES;
+            if (ackByExactHeading || ackByProgression || ackByVersion || ackByTimeout) {
+                p1JsMoveBuffer.awaitingAckDir = null;
+                p1JsMoveBuffer.awaitingAckFromHeading = null;
+                p1JsMoveBuffer.awaitingAckFrames = 0;
+                p1JsMoveBuffer.awaitingAckVersion = -1;
+            }
+        }
+
+        if (p1JsMoveBuffer.cooldown > 0) {
+            p1JsMoveBuffer.cooldown--;
+        } else {
+            if (p1JsMoveBuffer.awaitingAckDir) {
+                // Hold buffered inputs until the previously-sent move is actually
+                // visible in server-authoritative heading.
+            } else {
+                const move = jsSelectNextBufferedMove(p1JsMoveBuffer, heading);
+                if (move) {
+                    inst.invokeMethodAsync('SendDirectionMove', 'p1', move);
+                    p1JsMoveBuffer.awaitingAckDir = move;
+                    p1JsMoveBuffer.awaitingAckFromHeading = serverHeading;
+                    p1JsMoveBuffer.awaitingAckFrames = 0;
+                    p1JsMoveBuffer.awaitingAckVersion = serverVersion;
+                    p1JsMoveBuffer.lastSendAtMs = performance.now();
+                    p1JsMoveBuffer.cooldown = JS_MOVE_COOLDOWN_FRAMES;
+                }
+            }
+        }
+    }
+
+    // P2 (split screen only)
+    if (splitScreen && p2CanMove) {
+        const serverVersion = Number.isFinite(latestRenderState?.p2?.version) ? latestRenderState.p2.version : -1;
+        const serverHeading = getPlayerHeadingFromState('p2');
+        const heading = serverHeading ?? p2JsMoveBuffer.lastSentDir;
+
+        if (p2JsMoveBuffer.awaitingAckDir) {
+            if (serverHeading) {
+                p2JsMoveBuffer.awaitingAckFrames++;
+            }
+            const ackByExactHeading = serverHeading === p2JsMoveBuffer.awaitingAckDir;
+            const ackByProgression = !!serverHeading
+                && !!p2JsMoveBuffer.awaitingAckFromHeading
+                && serverHeading !== p2JsMoveBuffer.awaitingAckFromHeading;
+            const ackByVersion = p2JsMoveBuffer.awaitingAckVersion >= 0
+                && serverVersion > p2JsMoveBuffer.awaitingAckVersion;
+            const ackByTimeout = p2JsMoveBuffer.awaitingAckFrames >= JS_ACK_TIMEOUT_FRAMES;
+            if (ackByExactHeading || ackByProgression || ackByVersion || ackByTimeout) {
+                p2JsMoveBuffer.awaitingAckDir = null;
+                p2JsMoveBuffer.awaitingAckFromHeading = null;
+                p2JsMoveBuffer.awaitingAckFrames = 0;
+                p2JsMoveBuffer.awaitingAckVersion = -1;
+            }
+        }
+
+        if (p2JsMoveBuffer.cooldown > 0) {
+            p2JsMoveBuffer.cooldown--;
+        } else {
+            if (p2JsMoveBuffer.awaitingAckDir) {
+                // Hold buffered inputs until the previously-sent move is actually
+                // visible in server-authoritative heading.
+            } else {
+                const move = jsSelectNextBufferedMove(p2JsMoveBuffer, heading);
+                if (move) {
+                    inst.invokeMethodAsync('SendDirectionMove', 'p2', move);
+                    p2JsMoveBuffer.awaitingAckDir = move;
+                    p2JsMoveBuffer.awaitingAckFromHeading = serverHeading;
+                    p2JsMoveBuffer.awaitingAckFrames = 0;
+                    p2JsMoveBuffer.awaitingAckVersion = serverVersion;
+                    p2JsMoveBuffer.lastSendAtMs = performance.now();
+                    p2JsMoveBuffer.cooldown = JS_MOVE_COOLDOWN_FRAMES;
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Global keydown listener (attached once).
+ * - Shift, Tab, Escape, Enter, Delete, Backspace: always forwarded to C# HandleKeyPress.
+ * - Direction keys (WASD / arrows) when a sidebar is open: forwarded to C# for menu nav.
+ * - Direction keys when the game is live: enqueued directly into the JS move buffer.
+ *   The buffer is flushed every rAF frame and calls SendDirectionMove() on C# with the
+ *   validated, reordered direction — zero Blazor round-trip delay for move input.
  */
 if (!window.snakeKeyHandlerAttached) {
     document.addEventListener('keydown', function (event) {
@@ -1706,7 +2014,7 @@ if (!window.snakeKeyHandlerAttached) {
         var isInTextInput = (activeTag === 'INPUT' && activeType !== 'checkbox' && activeType !== 'radio' && activeType !== 'button')
             || activeTag === 'TEXTAREA' || activeTag === 'SELECT';
 
-        // Always forward Shift signals (for respawn/connect) — blur any focused input first
+        // Always forward Shift signals (for respawn/connect) — blur any focused input first.
         if (event.key === "Shift") {
             if (isInTextInput && document.activeElement) document.activeElement.blur();
             var side = event.code === "ShiftRight" ? "ShiftRight" : "ShiftLeft";
@@ -1714,7 +2022,7 @@ if (!window.snakeKeyHandlerAttached) {
             return;
         }
 
-        // When typing in a text input, don't forward other keys to the game
+        // When typing in a text input, only intercept Tab/Escape/Enter.
         if (isInTextInput) {
             if (event.key === 'Tab' || event.key === 'Escape' || event.key === 'Enter') {
                 event.preventDefault();
@@ -1726,12 +2034,55 @@ if (!window.snakeKeyHandlerAttached) {
             return;
         }
 
-        // Prevent defaults on game keys and menu keys
+        // Prevent browser defaults on all game/menu keys.
         var preventKeys = ["w", "a", "s", "d", "ArrowUp", "ArrowLeft", "ArrowDown", "ArrowRight", "Tab", "Delete", "Backspace", "Escape", "Enter"];
         if (preventKeys.includes(event.key)) {
             event.preventDefault();
         }
 
+        // Read the current sidebar / split-screen flags from the latest render state.
+        const rs = latestRenderState;
+        const p1SidebarOpen = rs ? !!rs.p1SidebarOpen : false;
+        const p2SidebarOpen = rs ? !!rs.p2SidebarOpen : false;
+        const splitScreen   = rs ? !!rs.splitScreen   : false;
+        const p1CanMove     = rs ? !!rs.p1CanMove     : false;
+        const p2CanMove     = rs ? !!rs.p2CanMove     : false;
+
+        // WASD → P1 movement (or P1 sidebar menu navigation when open).
+        const wasdDir = { w: 'up', a: 'left', s: 'down', d: 'right' }[event.key.toLowerCase()];
+        if (wasdDir !== undefined) {
+            if (p1SidebarOpen) {
+                // Sidebar is open — let C# handle the menu navigation.
+                window.theInstance.invokeMethodAsync('HandleKeyPress', event.key);
+            } else if (p1CanMove) {
+                jsMoveEnqueue(p1JsMoveBuffer, wasdDir);
+                tickJsMoveBuffers();
+            }
+            return;
+        }
+
+        // Arrow keys → P2 in split, P1 in single (or sidebar menu navigation when open).
+        const arrowDir = { ArrowUp: 'up', ArrowLeft: 'left', ArrowDown: 'down', ArrowRight: 'right' }[event.key];
+        if (arrowDir !== undefined) {
+            if (splitScreen) {
+                if (p2SidebarOpen) {
+                    window.theInstance.invokeMethodAsync('HandleKeyPress', event.key);
+                } else if (p2CanMove) {
+                    jsMoveEnqueue(p2JsMoveBuffer, arrowDir);
+                    tickJsMoveBuffers();
+                }
+            } else {
+                if (p1SidebarOpen) {
+                    window.theInstance.invokeMethodAsync('HandleKeyPress', event.key);
+                } else if (p1CanMove) {
+                    jsMoveEnqueue(p1JsMoveBuffer, arrowDir);
+                    tickJsMoveBuffers();
+                }
+            }
+            return;
+        }
+
+        // All other keys (Tab, Escape, Enter, Delete, Backspace) → C#.
         window.theInstance.invokeMethodAsync('HandleKeyPress', event.key);
     });
     window.snakeKeyHandlerAttached = true;
