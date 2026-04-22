@@ -1690,15 +1690,20 @@ function clamp(value, min, max) {
 const DIR_OPPOSITES_JS = { up: 'down', down: 'up', left: 'right', right: 'left' };
 
 /**
- * Per-player move buffer: two-slot queue, lastSentDir, frame cooldown, and
+ * Per-player move buffer: three-slot queue, lastSentDir, frame cooldown, and
  * awaitingAck gate so we only consume next input after server confirms progression.
+ * pendingBuffered180 stores an opposite-direction replay that must wait until
+ * it becomes legal after the intermediary 90-degree turn is acknowledged.
  * Queue entries are { dir, atMs }.
  */
-const p1JsMoveBuffer = { queue: [], lastSentDir: null, cooldown: 0, awaitingAckDir: null, awaitingAckFromHeading: null, awaitingAckFrames: 0, awaitingAckVersion: -1, lastSendAtMs: 0 };
-const p2JsMoveBuffer = { queue: [], lastSentDir: null, cooldown: 0, awaitingAckDir: null, awaitingAckFromHeading: null, awaitingAckFrames: 0, awaitingAckVersion: -1, lastSendAtMs: 0 };
+const p1JsMoveBuffer = { queue: [], pendingBuffered180: null, lastSentDir: null, cooldown: 0, awaitingAckDir: null, awaitingAckFromHeading: null, awaitingAckFrames: 0, awaitingAckVersion: -1, lastSendAtMs: 0 };
+const p2JsMoveBuffer = { queue: [], pendingBuffered180: null, lastSentDir: null, cooldown: 0, awaitingAckDir: null, awaitingAckFromHeading: null, awaitingAckFrames: 0, awaitingAckVersion: -1, lastSendAtMs: 0 };
 
-/** Safety bound to avoid indefinite ack lock if a move is dropped/rejected upstream. */
-const JS_ACK_TIMEOUT_FRAMES = 90;
+/**
+ * Safety bound to avoid indefinite ack lock if a move is dropped/rejected upstream.
+ * Keep this short so buffered chains progress as soon as moves become legal.
+ */
+const JS_ACK_TIMEOUT_FRAMES = 12;
 
 /**
  * Max spacing between opposite + intermediary keys for a buffered 180 chain.
@@ -1742,12 +1747,12 @@ function getPlayerHeadingFromState(vp) {
 }
 
 /**
- * Enqueues a direction into a buffer (max 2 slots, no consecutive duplicates).
+ * Enqueues a direction into a buffer (max 3 slots, no consecutive duplicates).
  * @param {{queue:Array<{dir:string,atMs:number}>,lastSentDir:string|null,cooldown:number,awaitingAckDir:string|null}} buf
  * @param {string} dir
  */
 function jsMoveEnqueue(buf, dir) {
-    if (buf.queue.length >= 2) return;
+    if (buf.queue.length >= 3) return;
     if (buf.queue.length > 0 && buf.queue[buf.queue.length - 1].dir === dir) return;
     buf.queue.push({ dir, atMs: performance.now() });
 }
@@ -1786,9 +1791,20 @@ function isOppositeMove(move, heading) {
  * @returns {string|null} Direction to send, or null.
  */
 function jsSelectNextBufferedMove(buf, heading) {
-    if (buf.queue.length === 0) return null;
-
     const nowMs = performance.now();
+
+    // Buffered 180 replay has priority and blocks other queued inputs until resolved.
+    if (buf.pendingBuffered180) {
+        if (isMoveLegalForHeading(buf.pendingBuffered180.dir, heading)) {
+            const replay = buf.pendingBuffered180.dir;
+            buf.pendingBuffered180 = null;
+            buf.lastSentDir = replay;
+            return replay;
+        }
+        return null;
+    }
+
+    if (buf.queue.length === 0) return null;
 
     const first = buf.queue[0].dir;
     if (isMoveLegalForHeading(first, heading)) {
@@ -1831,10 +1847,12 @@ function jsSelectNextBufferedMove(buf, heading) {
             const isBuffered180 = isOppositeMove(first, heading) && chainDeltaMs <= JS_BUFFERED_180_WINDOW_MS;
 
             if (isBuffered180) {
-                // Illegal-first/legal-second is the classic buffered 180 setup.
-                // Send the legal intermediary turn now and keep the opposite
-                // input queued for replay after heading updates.
-                buf.queue.splice(1, 1);
+                // Buffered 180 flow: send intermediary 90 now, move opposite input
+                // into pending replay so it fires only after world-ack makes it legal.
+                const heldOpposite = buf.queue.shift();
+                const legalNow = buf.queue.shift();
+                if (!heldOpposite || !legalNow) return null;
+                buf.pendingBuffered180 = { dir: heldOpposite.dir, atMs: nowMs };
                 buf.lastSentDir = second;
                 return second;
             }
@@ -1867,8 +1885,11 @@ function jsSelectNextBufferedMove(buf, heading) {
     return null;
 }
 
-/** Frames to wait between sends (one skipped frame preserves ordered two-step turns). */
-const JS_MOVE_COOLDOWN_FRAMES = 1;
+/**
+ * Frames to wait between sends.
+ * Zero keeps input chains responsive; ordering is still enforced by ack gating.
+ */
+const JS_MOVE_COOLDOWN_FRAMES = 0;
 
 /**
  * Called every rAF frame. Flushes queued moves for each player, respecting the
@@ -1885,6 +1906,7 @@ function tickJsMoveBuffers() {
     // Clear buffers when the player can't move (dead, not connected, etc.)
     if (!p1CanMove) {
         p1JsMoveBuffer.queue.length = 0;
+        p1JsMoveBuffer.pendingBuffered180 = null;
         p1JsMoveBuffer.lastSentDir = null;
         p1JsMoveBuffer.cooldown = 0;
         p1JsMoveBuffer.awaitingAckDir = null;
@@ -1895,6 +1917,7 @@ function tickJsMoveBuffers() {
     }
     if (!p2CanMove) {
         p2JsMoveBuffer.queue.length = 0;
+        p2JsMoveBuffer.pendingBuffered180 = null;
         p2JsMoveBuffer.lastSentDir = null;
         p2JsMoveBuffer.cooldown = 0;
         p2JsMoveBuffer.awaitingAckDir = null;
@@ -1911,21 +1934,30 @@ function tickJsMoveBuffers() {
         const heading = serverHeading ?? p1JsMoveBuffer.lastSentDir;
 
         if (p1JsMoveBuffer.awaitingAckDir) {
-            if (serverHeading) {
-                p1JsMoveBuffer.awaitingAckFrames++;
-            }
-            const ackByExactHeading = serverHeading === p1JsMoveBuffer.awaitingAckDir;
-            const ackByProgression = !!serverHeading
-                && !!p1JsMoveBuffer.awaitingAckFromHeading
-                && serverHeading !== p1JsMoveBuffer.awaitingAckFromHeading;
-            const ackByVersion = p1JsMoveBuffer.awaitingAckVersion >= 0
-                && serverVersion > p1JsMoveBuffer.awaitingAckVersion;
-            const ackByTimeout = p1JsMoveBuffer.awaitingAckFrames >= JS_ACK_TIMEOUT_FRAMES;
-            if (ackByExactHeading || ackByProgression || ackByVersion || ackByTimeout) {
+            // Always advance timeout while waiting, even if heading is temporarily null.
+            p1JsMoveBuffer.awaitingAckFrames++;
+            const ackByTurnApplied = serverHeading === p1JsMoveBuffer.awaitingAckDir
+                && (!p1JsMoveBuffer.awaitingAckFromHeading || serverHeading !== p1JsMoveBuffer.awaitingAckFromHeading);
+
+            if (ackByTurnApplied) {
                 p1JsMoveBuffer.awaitingAckDir = null;
                 p1JsMoveBuffer.awaitingAckFromHeading = null;
                 p1JsMoveBuffer.awaitingAckFrames = 0;
                 p1JsMoveBuffer.awaitingAckVersion = -1;
+            } else if (p1JsMoveBuffer.awaitingAckFrames >= JS_ACK_TIMEOUT_FRAMES) {
+                // Retry only after the server has advanced world state without applying
+                // the requested turn. This avoids long stalls and avoids no-op replay spam.
+                const retryHeading = serverHeading ?? p1JsMoveBuffer.lastSentDir;
+                const worldAdvanced = Number.isFinite(serverVersion)
+                    && Number.isFinite(p1JsMoveBuffer.awaitingAckVersion)
+                    && serverVersion > p1JsMoveBuffer.awaitingAckVersion;
+                if (worldAdvanced && isMoveLegalForHeading(p1JsMoveBuffer.awaitingAckDir, retryHeading)) {
+                    inst.invokeMethodAsync('SendDirectionMove', 'p1', p1JsMoveBuffer.awaitingAckDir);
+                    p1JsMoveBuffer.awaitingAckVersion = serverVersion;
+                    p1JsMoveBuffer.lastSendAtMs = performance.now();
+                    p1JsMoveBuffer.cooldown = JS_MOVE_COOLDOWN_FRAMES;
+                }
+                p1JsMoveBuffer.awaitingAckFrames = 0;
             }
         }
 
@@ -1957,21 +1989,30 @@ function tickJsMoveBuffers() {
         const heading = serverHeading ?? p2JsMoveBuffer.lastSentDir;
 
         if (p2JsMoveBuffer.awaitingAckDir) {
-            if (serverHeading) {
-                p2JsMoveBuffer.awaitingAckFrames++;
-            }
-            const ackByExactHeading = serverHeading === p2JsMoveBuffer.awaitingAckDir;
-            const ackByProgression = !!serverHeading
-                && !!p2JsMoveBuffer.awaitingAckFromHeading
-                && serverHeading !== p2JsMoveBuffer.awaitingAckFromHeading;
-            const ackByVersion = p2JsMoveBuffer.awaitingAckVersion >= 0
-                && serverVersion > p2JsMoveBuffer.awaitingAckVersion;
-            const ackByTimeout = p2JsMoveBuffer.awaitingAckFrames >= JS_ACK_TIMEOUT_FRAMES;
-            if (ackByExactHeading || ackByProgression || ackByVersion || ackByTimeout) {
+            // Always advance timeout while waiting, even if heading is temporarily null.
+            p2JsMoveBuffer.awaitingAckFrames++;
+            const ackByTurnApplied = serverHeading === p2JsMoveBuffer.awaitingAckDir
+                && (!p2JsMoveBuffer.awaitingAckFromHeading || serverHeading !== p2JsMoveBuffer.awaitingAckFromHeading);
+
+            if (ackByTurnApplied) {
                 p2JsMoveBuffer.awaitingAckDir = null;
                 p2JsMoveBuffer.awaitingAckFromHeading = null;
                 p2JsMoveBuffer.awaitingAckFrames = 0;
                 p2JsMoveBuffer.awaitingAckVersion = -1;
+            } else if (p2JsMoveBuffer.awaitingAckFrames >= JS_ACK_TIMEOUT_FRAMES) {
+                // Retry only after the server has advanced world state without applying
+                // the requested turn. This avoids long stalls and avoids no-op replay spam.
+                const retryHeading = serverHeading ?? p2JsMoveBuffer.lastSentDir;
+                const worldAdvanced = Number.isFinite(serverVersion)
+                    && Number.isFinite(p2JsMoveBuffer.awaitingAckVersion)
+                    && serverVersion > p2JsMoveBuffer.awaitingAckVersion;
+                if (worldAdvanced && isMoveLegalForHeading(p2JsMoveBuffer.awaitingAckDir, retryHeading)) {
+                    inst.invokeMethodAsync('SendDirectionMove', 'p2', p2JsMoveBuffer.awaitingAckDir);
+                    p2JsMoveBuffer.awaitingAckVersion = serverVersion;
+                    p2JsMoveBuffer.lastSendAtMs = performance.now();
+                    p2JsMoveBuffer.cooldown = JS_MOVE_COOLDOWN_FRAMES;
+                }
+                p2JsMoveBuffer.awaitingAckFrames = 0;
             }
         }
 

@@ -134,14 +134,30 @@ public class Server
 			Networking.GetData(state);
 			return;
 		}
-		Socket theSocket = state.TheSocket;
-		string text = "not set";
+
 		string rawData = state.GetData();
-		string[] lines = rawData.Split('\n');
-		text = lines[0].Trim();
+		int firstNewline = rawData.IndexOf('\n');
+		if (firstNewline < 0)
+		{
+			Networking.GetData(state);
+			return;
+		}
+
+		int secondNewline = rawData.IndexOf('\n', firstNewline + 1);
+		if (secondNewline < 0)
+		{
+			Networking.GetData(state);
+			return;
+		}
+
+		Socket theSocket = state.TheSocket;
+		string text = rawData.Substring(0, firstNewline).Trim().TrimEnd('\r');
+		string skinLine = rawData.Substring(firstNewline + 1, secondNewline - firstNewline - 1).Trim().TrimEnd('\r');
 		int skinIndex = 0;
-		if (lines.Length > 1 && !string.IsNullOrWhiteSpace(lines[1]))
-			int.TryParse(lines[1].Trim(), out skinIndex);
+		if (!string.IsNullOrWhiteSpace(skinLine))
+			int.TryParse(skinLine, out skinIndex);
+
+		state.RemoveData(0, secondNewline + 1);
 		Console.WriteLine("Player(" + state.ID + ") \"" + text + "\" joined with skin " + skinIndex + ".");
 		state.OnNetworkAction = DataCameFromClient;
 		Snake snake;

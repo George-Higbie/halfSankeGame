@@ -7,6 +7,7 @@
 using System;
 using System.Collections.Generic;
 using System.Net.Http;
+using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using MySql.Data.MySqlClient;
@@ -88,6 +89,8 @@ namespace GUI.Components.Controllers
                 using var conn = new MySqlConnection(ConnectionString);
                 conn.Open();
 
+                CloseActiveGamesForEndpoint(conn, host, port, startTime);
+
                 using var cmd = conn.CreateCommand();
                 cmd.CommandText = @"
                     INSERT INTO Games (StartTime, EndTime, Host, Port, IsActive)
@@ -111,6 +114,27 @@ namespace GUI.Components.Controllers
                 _logger.LogWarning(ex, "Failed to create game session row.");
                 return null;
             }
+        }
+
+        private static void CloseActiveGamesForEndpoint(MySqlConnection conn, string? host, int? port, DateTime closeTime)
+        {
+            if (string.IsNullOrWhiteSpace(host) || !port.HasValue)
+            {
+                return;
+            }
+
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = @"
+                UPDATE Games
+                SET EndTime = COALESCE(EndTime, @closeTime),
+                    IsActive = 0
+                WHERE IsActive = 1
+                  AND Host = @host
+                  AND Port = @port;";
+            cmd.Parameters.AddWithValue("@closeTime", closeTime.ToString("yyyy-MM-dd H:mm:ss"));
+            cmd.Parameters.AddWithValue("@host", host);
+            cmd.Parameters.AddWithValue("@port", port.Value);
+            cmd.ExecuteNonQuery();
         }
 
         /// <summary>
@@ -279,6 +303,7 @@ namespace GUI.Components.Controllers
                 conn.Open();
 
                 CloseAllEmptyActiveGames(conn, DateTime.Now);
+                CloseDuplicateActiveEndpointGames(conn, DateTime.Now);
 
                 using var cmd = conn.CreateCommand();
                 cmd.CommandText = @"
@@ -306,7 +331,7 @@ namespace GUI.Components.Controllers
                 _logger.LogWarning(ex, "Failed to query open game sessions.");
             }
 
-            return sessions;
+            return PruneUnreachableLoopbackSessions(sessions);
         }
 
         /// <summary>
@@ -392,6 +417,75 @@ namespace GUI.Components.Controllers
             cmd.ExecuteNonQuery();
         }
 
+        private static void CloseDuplicateActiveEndpointGames(MySqlConnection conn, DateTime closeTime)
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = @"
+                UPDATE Games g
+                JOIN (
+                    SELECT Host, Port, MAX(GameId) AS KeepGameId
+                    FROM Games
+                    WHERE IsActive = 1
+                      AND Host IS NOT NULL
+                      AND Host <> ''
+                      AND Port IS NOT NULL
+                    GROUP BY Host, Port
+                ) keepers
+                    ON keepers.Host = g.Host
+                   AND keepers.Port = g.Port
+                SET g.EndTime = COALESCE(g.EndTime, @closeTime),
+                    g.IsActive = 0
+                WHERE g.IsActive = 1
+                  AND g.GameId <> keepers.KeepGameId;";
+            cmd.Parameters.AddWithValue("@closeTime", closeTime.ToString("yyyy-MM-dd H:mm:ss"));
+            cmd.ExecuteNonQuery();
+        }
+
+        private IReadOnlyList<LiveGameSession> PruneUnreachableLoopbackSessions(IReadOnlyList<LiveGameSession> sessions)
+        {
+            if (sessions.Count == 0)
+            {
+                return sessions;
+            }
+
+            DateTime now = DateTime.Now;
+            var reachable = new List<LiveGameSession>(sessions.Count);
+            foreach (var session in sessions)
+            {
+                if (IsTcpEndpointReachable(session.Host, session.Port))
+                {
+                    reachable.Add(session);
+                    continue;
+                }
+
+                // Keep very recent sessions during startup races.
+                if ((now - session.StartTime) < TimeSpan.FromSeconds(20))
+                {
+                    reachable.Add(session);
+                    continue;
+                }
+
+                TrySetGameEndTime(session.GameId, now);
+            }
+
+            return reachable;
+        }
+
+        private static bool IsTcpEndpointReachable(string host, int port)
+        {
+            try
+            {
+                using var client = new TcpClient();
+                var connectTask = client.ConnectAsync(host, port);
+                bool completed = connectTask.Wait(TimeSpan.FromMilliseconds(150));
+                return completed && client.Connected;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         private int? RelayCreateGame(DateTime startTime, string? host, int? port)
         {
             if (_relayClient == null)
@@ -457,7 +551,7 @@ namespace GUI.Components.Controllers
                 {
                     PropertyNameCaseInsensitive = true,
                 });
-                return sessions ?? [];
+                return PruneUnreachableLoopbackSessions(sessions ?? []);
             }
             catch (Exception ex)
             {

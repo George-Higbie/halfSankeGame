@@ -399,6 +399,8 @@ internal static class ScoreDataAccess
 		using MySqlConnection conn = new(ConnectionString);
 		conn.Open();
 
+		CloseActiveGamesForEndpoint(conn, host, port, startTime);
+
 		using MySqlCommand cmd = conn.CreateCommand();
 		cmd.CommandText = @"
 			INSERT INTO Games (StartTime, EndTime, Host, Port, IsActive)
@@ -410,6 +412,27 @@ internal static class ScoreDataAccess
 
 		object? result = cmd.ExecuteScalar();
 		return result == null ? null : Convert.ToInt32(result);
+	}
+
+	private static void CloseActiveGamesForEndpoint(MySqlConnection conn, string? host, int? port, DateTime closeTime)
+	{
+		if (string.IsNullOrWhiteSpace(host) || !port.HasValue)
+		{
+			return;
+		}
+
+		using MySqlCommand cmd = conn.CreateCommand();
+		cmd.CommandText = @"
+			UPDATE Games
+			SET EndTime = COALESCE(EndTime, @closeTime),
+				IsActive = 0
+			WHERE IsActive = 1
+			  AND Host = @host
+			  AND Port = @port;";
+		cmd.Parameters.AddWithValue("@closeTime", closeTime.ToString("yyyy-MM-dd H:mm:ss"));
+		cmd.Parameters.AddWithValue("@host", host);
+		cmd.Parameters.AddWithValue("@port", port.Value);
+		cmd.ExecuteNonQuery();
 	}
 
 	public static void SetGameEndTime(int gameId, DateTime endTime)
@@ -489,6 +512,7 @@ internal static class ScoreDataAccess
 		conn.Open();
 
 		CloseAllEmptyActiveGames(conn, DateTime.Now);
+		CloseDuplicateActiveEndpointGames(conn, DateTime.Now);
 
 		using MySqlCommand cmd = conn.CreateCommand();
 		cmd.CommandText = @"
@@ -511,7 +535,7 @@ internal static class ScoreDataAccess
 				reader.GetDateTime("StartTime")));
 		}
 
-		return sessions;
+		return PruneUnreachableLoopbackSessions(sessions);
 	}
 
 	public static List<GameRow> GetGames()
@@ -598,6 +622,75 @@ internal static class ScoreDataAccess
 			  );";
 		cmd.Parameters.AddWithValue("@closeTime", closeTime.ToString("yyyy-MM-dd H:mm:ss"));
 		cmd.ExecuteNonQuery();
+	}
+
+	private static void CloseDuplicateActiveEndpointGames(MySqlConnection conn, DateTime closeTime)
+	{
+		using MySqlCommand cmd = conn.CreateCommand();
+		cmd.CommandText = @"
+			UPDATE Games g
+			JOIN (
+				SELECT Host, Port, MAX(GameId) AS KeepGameId
+				FROM Games
+				WHERE IsActive = 1
+				  AND Host IS NOT NULL
+				  AND Host <> ''
+				  AND Port IS NOT NULL
+				GROUP BY Host, Port
+			) keepers
+			  ON keepers.Host = g.Host
+			 AND keepers.Port = g.Port
+			SET g.EndTime = COALESCE(g.EndTime, @closeTime),
+				g.IsActive = 0
+			WHERE g.IsActive = 1
+			  AND g.GameId <> keepers.KeepGameId;";
+		cmd.Parameters.AddWithValue("@closeTime", closeTime.ToString("yyyy-MM-dd H:mm:ss"));
+		cmd.ExecuteNonQuery();
+	}
+
+	private static List<LiveGameSession> PruneUnreachableLoopbackSessions(List<LiveGameSession> sessions)
+	{
+		if (sessions.Count == 0)
+		{
+			return sessions;
+		}
+
+		DateTime now = DateTime.Now;
+		List<LiveGameSession> reachable = [];
+		foreach (LiveGameSession session in sessions)
+		{
+			if (IsTcpEndpointReachable(session.Host, session.Port))
+			{
+				reachable.Add(session);
+				continue;
+			}
+
+			// Keep very recent sessions during startup races.
+			if ((now - session.StartTime) < TimeSpan.FromSeconds(20))
+			{
+				reachable.Add(session);
+				continue;
+			}
+
+			SetGameEndTime(session.GameId, now);
+		}
+
+		return reachable;
+	}
+
+	private static bool IsTcpEndpointReachable(string host, int port)
+	{
+		try
+		{
+			using TcpClient client = new();
+			Task connectTask = client.ConnectAsync(host, port);
+			bool completed = connectTask.Wait(TimeSpan.FromMilliseconds(150));
+			return completed && client.Connected;
+		}
+		catch
+		{
+			return false;
+		}
 	}
 
 	public static List<TopScoreRow> GetGlobalTopScores(int limit)
