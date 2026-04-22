@@ -20,6 +20,15 @@ let renderCtx = null;
 /** @type {any} Latest render state pushed from .NET. */
 let latestRenderState = null;
 
+/** @type {any} Previous render state used for snapshot interpolation. */
+let previousRenderState = null;
+
+/** @type {number} Performance timestamp when the latest render state arrived. */
+let latestRenderStateReceivedAt = 0;
+
+/** @type {number} Estimated milliseconds between snapshots for interpolation. */
+let interpolationWindowMs = 16;
+
 /** @type {Array<any>} Skin catalog pushed from .NET and used by the browser renderer. */
 let skinCatalog = [];
 
@@ -47,6 +56,11 @@ const SNAKE_WIDTH = 10;
 const GRID_SPACING = 50;
 const WALL_HALF_WIDTH = 25;
 const WALL_THICKNESS = 50;
+const BIT_DISTANCE = 20;
+const EXPLOSION_DELAY = 0.05;
+const PARTICLE_LIFESPAN = 0.6;
+const POWERUP_POP_DURATION_SECONDS = 0.11;
+const POWERUP_POP_BOUNCE_AMPLITUDE = 0.30;
 
 const DEFAULT_SKIN = {
     bodyColor: '#4caf50',
@@ -59,6 +73,11 @@ const DEFAULT_SKIN = {
     eyeColor: 'white',
     pupilColor: '#111',
     deathColor: '#4caf50'
+};
+
+const viewportFxStates = {
+    p1: createViewportFxState(),
+    p2: createViewportFxState()
 };
 
 /** @type {HTMLElement|null} The scoreboard overlay element used for dither masking. */
@@ -200,9 +219,24 @@ window.setSnakeSkinCatalog = (skins) => {
  * @param {any} state - Latest world/render state from .NET.
  */
 window.setSnakeRenderState = (state) => {
+    const receivedAt = performance.now();
+    if (latestRenderState) {
+        previousRenderState = latestRenderState;
+        const snapshotDelta = receivedAt - latestRenderStateReceivedAt;
+        if (Number.isFinite(snapshotDelta) && snapshotDelta > 0) {
+            interpolationWindowMs = clamp(snapshotDelta, 16, 80);
+        }
+    }
+    else {
+        previousRenderState = state;
+    }
+
     latestRenderState = state;
+    latestRenderStateReceivedAt = receivedAt;
+
     if (!state || !state.splitScreen) {
         resetCamera(cameraStates.p2);
+        resetViewportFx(viewportFxStates.p2);
     }
 };
 
@@ -273,6 +307,120 @@ function resetCamera(camera) {
     camera.initialized = false;
 }
 
+/** Resets cached visual-effect state for a viewport. */
+function resetViewportFx(fxState) {
+    fxState.deathAnims.clear();
+    fxState.powerupFirstSeenAt.clear();
+    fxState.wallCache = null;
+    fxState.wallCacheKey = '';
+}
+
+/** Creates per-viewport caches for animations and wall rendering. */
+function createViewportFxState() {
+    return {
+        deathAnims: new Map(),
+        powerupFirstSeenAt: new Map(),
+        wallCache: null,
+        wallCacheKey: ''
+    };
+}
+
+/** Builds an interpolated render state between the previous and latest snapshots. */
+function buildInterpolatedRenderState(now) {
+    if (!latestRenderState) {
+        return null;
+    }
+
+    if (!previousRenderState || previousRenderState === latestRenderState) {
+        return latestRenderState;
+    }
+
+    const alpha = clamp((now - latestRenderStateReceivedAt) / interpolationWindowMs, 0, 1);
+    return {
+        ...latestRenderState,
+        p1: interpolateViewport(previousRenderState.p1, latestRenderState.p1, alpha),
+        p2: latestRenderState.p2 ? interpolateViewport(previousRenderState.p2, latestRenderState.p2, alpha) : null
+    };
+}
+
+/** Interpolates one viewport's snakes and powerups. */
+function interpolateViewport(previousViewport, currentViewport, alpha) {
+    if (!currentViewport) {
+        return null;
+    }
+
+    return {
+        ...currentViewport,
+        snakes: interpolateSnakes(previousViewport?.snakes, currentViewport.snakes, currentViewport.playerId, alpha),
+        powerups: interpolatePowerups(previousViewport?.powerups, currentViewport.powerups, alpha)
+    };
+}
+
+/** Interpolates snake bodies between snapshots for smoother movement. */
+function interpolateSnakes(previousSnakes, currentSnakes, playerId, alpha) {
+    if (!Array.isArray(currentSnakes)) {
+        return [];
+    }
+
+    const previousById = new Map(Array.isArray(previousSnakes)
+        ? previousSnakes.map((snake) => [snake.snake, snake])
+        : []);
+
+    return currentSnakes.map((snake) => interpolateSnake(previousById.get(snake.snake), snake, playerId, alpha));
+}
+
+/** Interpolates a single snake body when the topology is stable. */
+function interpolateSnake(previousSnake, currentSnake, playerId, alpha) {
+    if (!previousSnake || currentSnake.snake === playerId || currentSnake.died === true || currentSnake.alive !== true) {
+        return currentSnake;
+    }
+
+    if (!Array.isArray(previousSnake.body) || !Array.isArray(currentSnake.body) || previousSnake.body.length !== currentSnake.body.length) {
+        return currentSnake;
+    }
+
+    return {
+        ...currentSnake,
+        body: currentSnake.body.map((point, index) => interpolatePoint(previousSnake.body[index], point, alpha)),
+        dir: previousSnake.dir && currentSnake.dir ? interpolatePoint(previousSnake.dir, currentSnake.dir, alpha) : currentSnake.dir
+    };
+}
+
+/** Interpolates powerup locations between snapshots. */
+function interpolatePowerups(previousPowerups, currentPowerups, alpha) {
+    if (!Array.isArray(currentPowerups)) {
+        return [];
+    }
+
+    const previousById = new Map(Array.isArray(previousPowerups)
+        ? previousPowerups.map((powerup) => [powerup.power, powerup])
+        : []);
+
+    return currentPowerups.map((powerup) => {
+        const previousPowerup = previousById.get(powerup.power);
+        if (!previousPowerup?.loc || !powerup.loc || powerup.died) {
+            return powerup;
+        }
+
+        return {
+            ...powerup,
+            loc: interpolatePoint(previousPowerup.loc, powerup.loc, alpha)
+        };
+    });
+}
+
+/** Interpolates between two points. */
+function interpolatePoint(previousPoint, currentPoint, alpha) {
+    if (!previousPoint || !currentPoint) {
+        return currentPoint;
+    }
+
+    return {
+        X: previousPoint.X + (currentPoint.X - previousPoint.X) * alpha,
+        Y: previousPoint.Y + (currentPoint.Y - previousPoint.Y) * alpha
+    };
+}
+
 /**
  * Main browser-side render loop for gameplay.
  * @param {number} now - Current performance timestamp.
@@ -287,7 +435,10 @@ function renderGameFrame(now) {
     lastFrameAt = now;
 
     if (renderCtx && latestRenderState) {
-        drawGame(renderCtx, latestRenderState, dt, now / 1000);
+        const interpolatedState = buildInterpolatedRenderState(now);
+        if (interpolatedState) {
+            drawGame(renderCtx, interpolatedState, dt, now / 1000);
+        }
     }
 
     renderLoopHandle = requestAnimationFrame(renderGameFrame);
@@ -313,8 +464,8 @@ function drawGame(ctx, state, dt, timeSeconds) {
 
     if (state.splitScreen && state.p2) {
         const halfW = Math.floor(width / 2);
-        p1Head = drawViewport(ctx, state, state.p1, 0, 0, halfW, height, dt, timeSeconds, cameraStates.p1);
-        p2Head = drawViewport(ctx, state, state.p2, halfW, 0, halfW, height, dt, timeSeconds, cameraStates.p2);
+        p1Head = drawViewport(ctx, state, state.p1, 0, 0, halfW, height, dt, timeSeconds, cameraStates.p1, viewportFxStates.p1);
+        p2Head = drawViewport(ctx, state, state.p2, halfW, 0, halfW, height, dt, timeSeconds, cameraStates.p2, viewportFxStates.p2);
 
         ctx.save();
         ctx.strokeStyle = 'rgba(255,255,255,0.4)';
@@ -333,7 +484,7 @@ function drawGame(ctx, state, dt, timeSeconds) {
     }
     else if (state.p1) {
         resetCamera(cameraStates.p2);
-        p1Head = drawViewport(ctx, state, state.p1, 0, 0, width, height, dt, timeSeconds, cameraStates.p1);
+        p1Head = drawViewport(ctx, state, state.p1, 0, 0, width, height, dt, timeSeconds, cameraStates.p1, viewportFxStates.p1);
     }
 
     if (state.showScoreboard && state.p1 && state.p1.playerId != null) {
@@ -355,7 +506,7 @@ function drawGame(ctx, state, dt, timeSeconds) {
  * Draws a single viewport and returns the player's head in screen space.
  * @returns {{x:number,y:number}|null}
  */
-function drawViewport(ctx, state, viewport, vx, vy, vw, vh, dt, timeSeconds, camera) {
+function drawViewport(ctx, state, viewport, vx, vy, vw, vh, dt, timeSeconds, camera, fxState) {
     if (!viewport) {
         return null;
     }
@@ -419,9 +570,10 @@ function drawViewport(ctx, state, viewport, vx, vy, vw, vh, dt, timeSeconds, cam
         drawGrid(ctx, worldSize);
     }
 
-    drawWalls(ctx, viewport.walls || [], state.highQualityTextures);
-    drawPowerups(ctx, viewport.powerups || [], state.highQualityTextures, timeSeconds);
-    const head = drawSnakes(ctx, snakes, playerId, viewport.playerSkinIndex, viewport.showDeath);
+    drawDeathAnimations(ctx, snakes, playerId, viewport.playerSkinIndex, fxState, dt);
+    drawWalls(ctx, viewport.walls || [], state.highQualityTextures, fxState);
+    drawPowerups(ctx, viewport.powerups || [], state.highQualityTextures, timeSeconds, fxState);
+    const head = drawSnakes(ctx, snakes, playerId, viewport.playerSkinIndex, viewport.showDeath, fxState);
 
     ctx.restore();
     return head ? { x: head.x + camX, y: head.y + camY } : null;
@@ -445,37 +597,117 @@ function drawGrid(ctx, worldSize) {
 }
 
 /** Draws all walls using a light bevel in high-quality mode. */
-function drawWalls(ctx, walls, highQuality) {
-    for (const wall of walls) {
-        const rect = wallRect(wall);
-        if (!rect) continue;
-
-        if (!highQuality) {
-            ctx.fillStyle = '#555555';
+function drawWalls(ctx, walls, highQuality, fxState) {
+    if (!highQuality) {
+        ctx.fillStyle = '#555555';
+        for (const wall of walls) {
+            const rect = wallRect(wall);
+            if (!rect) continue;
             ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
-            continue;
         }
+        return;
+    }
 
-        const gradient = ctx.createLinearGradient(rect.x, rect.y, rect.x + rect.w, rect.y + rect.h);
-        gradient.addColorStop(0, '#857568');
-        gradient.addColorStop(1, '#5f5247');
-        ctx.fillStyle = gradient;
-        ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+    const cache = getWallCache(walls, fxState);
+    if (!cache) {
+        return;
+    }
 
-        ctx.strokeStyle = 'rgba(255,255,255,0.16)';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(rect.x + 1, rect.y + 1, Math.max(0, rect.w - 2), Math.max(0, rect.h - 2));
+    ctx.fillStyle = '#7c9c45';
+    for (const cell of cache.occupiedCells) {
+        ctx.fillRect(cell.cx * 25 - 3, cell.cy * 25 - 3, 31, 31);
+    }
 
-        ctx.fillStyle = 'rgba(0,0,0,0.12)';
-        ctx.fillRect(rect.x, rect.y + rect.h - 3, rect.w, 3);
-        ctx.fillRect(rect.x + rect.w - 3, rect.y, 3, rect.h);
+    const hasCell = (cx, cy) => cache.occupiedSet.has(`${cx},${cy}`);
+    const border = 3;
+    ctx.fillStyle = '#1a1c1e';
+    for (const cell of cache.occupiedCells) {
+        const px = cell.cx * 25;
+        const py = cell.cy * 25;
+        const nT = hasCell(cell.cx, cell.cy - 1);
+        const nB = hasCell(cell.cx, cell.cy + 1);
+        const nL = hasCell(cell.cx - 1, cell.cy);
+        const nR = hasCell(cell.cx + 1, cell.cy);
+
+        if (!nT) ctx.fillRect(px - (nL ? 0 : border), py - border, 25 + (nL ? 0 : border) + (nR ? 0 : border), border);
+        if (!nB) ctx.fillRect(px - (nL ? 0 : border), py + 25, 25 + (nL ? 0 : border) + (nR ? 0 : border), border);
+        if (!nL) ctx.fillRect(px - border, py - (nT ? 0 : border), border, 25 + (nT ? 0 : border) + (nB ? 0 : border));
+        if (!nR) ctx.fillRect(px + 25, py - (nT ? 0 : border), border, 25 + (nT ? 0 : border) + (nB ? 0 : border));
+
+        if (nT && nR && !hasCell(cell.cx + 1, cell.cy - 1)) ctx.fillRect(px + 25, py - border, border, border);
+        if (nT && nL && !hasCell(cell.cx - 1, cell.cy - 1)) ctx.fillRect(px - border, py - border, border, border);
+        if (nB && nR && !hasCell(cell.cx + 1, cell.cy + 1)) ctx.fillRect(px + 25, py + 25, border, border);
+        if (nB && nL && !hasCell(cell.cx - 1, cell.cy + 1)) ctx.fillRect(px - border, py + 25, border, border);
+    }
+
+    ctx.fillStyle = '#2a2420';
+    for (const cell of cache.occupiedCells) {
+        ctx.fillRect(cell.cx * 25, cell.cy * 25, 25, 25);
+    }
+
+    const palette = ['#7a6e63', '#6e6358', '#736860', '#80756a', '#6b6055', '#78706b', '#847a6f', '#716659'];
+    for (let paletteIndex = 0; paletteIndex < palette.length; paletteIndex++) {
+        ctx.fillStyle = palette[paletteIndex];
+        for (const brick of cache.bricks) {
+            if (brickHash(brick.bidCol, brick.bidRow) % palette.length !== paletteIndex) {
+                continue;
+            }
+
+            const bx = brick.minCx * 25 + 1;
+            const by = brick.cy * 25 + 1;
+            const bw = (brick.maxCx - brick.minCx + 1) * 25 - 2;
+            const bh = 23;
+            ctx.fillRect(bx, by, bw, bh);
+        }
+    }
+
+    ctx.fillStyle = 'rgba(255,255,255,0.13)';
+    for (const brick of cache.bricks) {
+        const bx = brick.minCx * 25 + 1;
+        const by = brick.cy * 25 + 1;
+        const bw = (brick.maxCx - brick.minCx + 1) * 25 - 2;
+        ctx.fillRect(bx, by, bw, 2);
+    }
+
+    ctx.fillStyle = 'rgba(255,255,255,0.08)';
+    for (const brick of cache.bricks) {
+        const bx = brick.minCx * 25 + 1;
+        const by = brick.cy * 25 + 1;
+        ctx.fillRect(bx, by, 2, 23);
+    }
+
+    ctx.fillStyle = 'rgba(0,0,0,0.18)';
+    for (const brick of cache.bricks) {
+        const bx = brick.minCx * 25 + 1;
+        const by = brick.cy * 25 + 1;
+        const bw = (brick.maxCx - brick.minCx + 1) * 25 - 2;
+        ctx.fillRect(bx, by + 21, bw, 2);
+    }
+
+    ctx.fillStyle = 'rgba(0,0,0,0.12)';
+    for (const brick of cache.bricks) {
+        const bx = brick.minCx * 25 + 1;
+        const by = brick.cy * 25 + 1;
+        const bw = (brick.maxCx - brick.minCx + 1) * 25 - 2;
+        ctx.fillRect(bx + bw - 2, by, 2, 23);
     }
 }
 
 /** Draws active powerups. */
-function drawPowerups(ctx, powerups, highQuality, timeSeconds) {
+function drawPowerups(ctx, powerups, highQuality, timeSeconds, fxState) {
+    const now = performance.now();
+    const activePowerupIds = new Set();
+
     for (const powerup of powerups) {
         if (!powerup || powerup.died || !powerup.loc) continue;
+
+        activePowerupIds.add(powerup.power);
+        if (!fxState.powerupFirstSeenAt.has(powerup.power)) {
+            fxState.powerupFirstSeenAt.set(powerup.power, now);
+        }
+
+        const ageSeconds = (now - fxState.powerupFirstSeenAt.get(powerup.power)) / 1000;
+        const popScale = computePowerupPopScale(ageSeconds);
 
         const pulse = highQuality ? Math.abs(Math.sin(timeSeconds * 5)) * 3 : 0;
         const x = powerup.loc.X;
@@ -483,24 +715,31 @@ function drawPowerups(ctx, powerups, highQuality, timeSeconds) {
 
         ctx.fillStyle = 'gold';
         ctx.beginPath();
-        ctx.arc(x, y, 8 + pulse, 0, Math.PI * 2);
+        ctx.arc(x, y, (8 + pulse) * popScale, 0, Math.PI * 2);
         ctx.fill();
 
         if (highQuality) {
             ctx.fillStyle = 'yellow';
             ctx.beginPath();
-            ctx.arc(x, y, 4, 0, Math.PI * 2);
+            ctx.arc(x, y, 4 * Math.max(0.35, popScale), 0, Math.PI * 2);
             ctx.fill();
+        }
+    }
+
+    for (const cachedPowerupId of Array.from(fxState.powerupFirstSeenAt.keys())) {
+        if (!activePowerupIds.has(cachedPowerupId)) {
+            fxState.powerupFirstSeenAt.delete(cachedPowerupId);
         }
     }
 }
 
 /** Draws all visible snakes and returns the current player's head. */
-function drawSnakes(ctx, snakes, playerId, playerSkinIndex, showDeath) {
+function drawSnakes(ctx, snakes, playerId, playerSkinIndex, showDeath, fxState) {
     let playerHead = null;
 
     for (const snake of snakes) {
         if (!snake || snake.dc === true || snake.alive !== true) continue;
+        if (fxState.deathAnims.has(snake.snake)) continue;
         if (snake.snake === playerId && showDeath) continue;
         if (!Array.isArray(snake.body) || snake.body.length < 2) continue;
 
@@ -651,68 +890,332 @@ function drawStripePattern(ctx, body, skin) {
 
 /** Draws checker, diamond, or wave marks perpendicular to the body path. */
 function drawPerpendicularPattern(ctx, body, skin) {
+    const segCount = body.length - 1;
+    const segNormals = new Array(segCount);
+    for (let seg = 0; seg < segCount; seg++) {
+        const dx = body[seg + 1].X - body[seg].X;
+        const dy = body[seg + 1].Y - body[seg].Y;
+        const len = Math.hypot(dx, dy);
+        segNormals[seg] = len < 0.001 ? { nx: 0, ny: 1 } : { nx: -dy / len, ny: dx / len };
+    }
+
+    const vtxNormals = new Array(body.length);
+    vtxNormals[0] = segCount > 0 ? segNormals[0] : { nx: 0, ny: 1 };
+    vtxNormals[body.length - 1] = segCount > 0 ? segNormals[segCount - 1] : { nx: 0, ny: 1 };
+    for (let vertex = 1; vertex < body.length - 1; vertex++) {
+        let bx = segNormals[vertex - 1].nx + segNormals[vertex].nx;
+        let by = segNormals[vertex - 1].ny + segNormals[vertex].ny;
+        const blendLength = Math.hypot(bx, by);
+        if (blendLength > 0.001) {
+            bx /= blendLength;
+            by /= blendLength;
+        }
+        else {
+            bx = segNormals[vertex].nx;
+            by = segNormals[vertex].ny;
+        }
+        vtxNormals[vertex] = { nx: bx, ny: by };
+    }
+
     const spacing = skin.pattern === BODY_PATTERN.CHECKER ? 12
         : skin.pattern === BODY_PATTERN.DIAMOND ? 18
             : 10;
 
-    let alternate = false;
-    forEachSampleAlongBody(body, spacing, (x, y, nx, ny) => {
-        if (skin.pattern === BODY_PATTERN.CHECKER) {
-            const accent = alternate && skin.bodyAccent2 ? skin.bodyAccent2 : skin.bodyAccent;
-            ctx.fillStyle = accent;
-            ctx.beginPath();
-            ctx.arc(x + nx * 2.6, y + ny * 2.6, 2.2, 0, Math.PI * 2);
-            ctx.fill();
+    const blendDistance = SNAKE_WIDTH * 1.5;
+    let accumulated = 0;
+    let markIndex = 0;
+    for (let i = 1; i < body.length; i++) {
+        const seg = i - 1;
+        const sdx = body[i].X - body[i - 1].X;
+        const sdy = body[i].Y - body[i - 1].Y;
+        const segLen = Math.hypot(sdx, sdy);
+        if (segLen < 0.001) continue;
+
+        const dirX = sdx / segLen;
+        const dirY = sdy / segLen;
+        const segmentNormal = segNormals[seg];
+        const bisStart = vtxNormals[seg];
+        const bisEnd = vtxNormals[seg + 1];
+
+        let walked = 0;
+        while (walked + (spacing - accumulated) <= segLen) {
+            walked += spacing - accumulated;
+            accumulated = 0;
+
+            const px = body[i - 1].X + sdx * (walked / segLen);
+            const py = body[i - 1].Y + sdy * (walked / segLen);
+
+            const distFromStart = walked;
+            const distFromEnd = segLen - walked;
+
+            let nx;
+            let ny;
+            if (distFromStart < blendDistance && seg > 0) {
+                let t = distFromStart / blendDistance;
+                t = t * t * (3 - 2 * t);
+                nx = bisStart.nx + (segmentNormal.nx - bisStart.nx) * t;
+                ny = bisStart.ny + (segmentNormal.ny - bisStart.ny) * t;
+            }
+            else if (distFromEnd < blendDistance && seg < segCount - 1) {
+                let t = distFromEnd / blendDistance;
+                t = t * t * (3 - 2 * t);
+                nx = bisEnd.nx + (segmentNormal.nx - bisEnd.nx) * t;
+                ny = bisEnd.ny + (segmentNormal.ny - bisEnd.ny) * t;
+            }
+            else {
+                nx = segmentNormal.nx;
+                ny = segmentNormal.ny;
+            }
+
+            const normalLength = Math.hypot(nx, ny);
+            if (normalLength > 0.001) {
+                nx /= normalLength;
+                ny /= normalLength;
+            }
+
+            drawPatternMark(ctx, skin, px, py, nx, ny, dirX, dirY, markIndex);
+            markIndex++;
         }
-        else if (skin.pattern === BODY_PATTERN.DIAMOND) {
-            const accent = alternate && skin.bodyAccent2 ? skin.bodyAccent2 : skin.bodyAccent;
-            ctx.fillStyle = accent;
-            ctx.beginPath();
-            ctx.moveTo(x, y - 3);
-            ctx.lineTo(x + 3, y);
-            ctx.lineTo(x, y + 3);
-            ctx.lineTo(x - 3, y);
-            ctx.closePath();
-            ctx.fill();
-        }
-        else if (skin.pattern === BODY_PATTERN.WAVE) {
-            const accent = alternate && skin.bodyAccent2 ? skin.bodyAccent2 : skin.bodyAccent;
-            ctx.strokeStyle = accent;
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.moveTo(x - nx * 3, y - ny * 3);
-            ctx.quadraticCurveTo(x + ny * 3, y - nx * 3, x + nx * 3, y + ny * 3);
-            ctx.stroke();
-        }
-        alternate = !alternate;
-    });
+
+        accumulated += segLen - walked;
+    }
 }
 
-/** Iterates evenly spaced sample points along the snake body. */
-function forEachSampleAlongBody(body, spacing, visitor) {
-    let carry = 0;
-    for (let i = 1; i < body.length; i++) {
-        const start = body[i - 1];
-        const end = body[i];
-        const dx = end.X - start.X;
-        const dy = end.Y - start.Y;
-        const len = Math.hypot(dx, dy);
-        if (len < 0.001) continue;
+/** Draws a single checker, diamond, or wave pattern mark. */
+function drawPatternMark(ctx, skin, px, py, nx, ny, dx, dy, index) {
+    const halfWidth = SNAKE_WIDTH / 2;
 
-        const dirX = dx / len;
-        const dirY = dy / len;
-        const nx = -dirY;
-        const ny = dirX;
+    if (skin.pattern === BODY_PATTERN.CHECKER) {
+        const color = skin.bodyAccent2 && index % 2 === 1 ? skin.bodyAccent2 : skin.bodyAccent;
+        const side = index % 2 === 0 ? 1 : -1;
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(px + nx * halfWidth * 0.4 * side, py + ny * halfWidth * 0.4 * side, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+        return;
+    }
 
-        let walked = spacing - carry;
-        while (walked <= len) {
-            visitor(start.X + dirX * walked, start.Y + dirY * walked, nx, ny);
-            walked += spacing;
+    if (skin.pattern === BODY_PATTERN.DIAMOND) {
+        const color = skin.bodyAccent2 && index % 2 === 1 ? skin.bodyAccent2 : skin.bodyAccent;
+        const diamondSize = halfWidth * 0.7;
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.moveTo(px + dx * diamondSize, py + dy * diamondSize);
+        ctx.lineTo(px + nx * diamondSize, py + ny * diamondSize);
+        ctx.lineTo(px - dx * diamondSize, py - dy * diamondSize);
+        ctx.lineTo(px - nx * diamondSize, py - ny * diamondSize);
+        ctx.closePath();
+        ctx.fill();
+        return;
+    }
+
+    if (skin.pattern === BODY_PATTERN.WAVE) {
+        const color = skin.bodyAccent2 && index % 2 === 1 ? skin.bodyAccent2 : skin.bodyAccent;
+        const waveSide = Math.sin(index * 1.2) * halfWidth * 0.5;
+        ctx.save();
+        ctx.globalAlpha = 0.8;
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(px + nx * waveSide, py + ny * waveSide, 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    }
+}
+
+/** Draws active death animations and spawns them when snakes die. */
+function drawDeathAnimations(ctx, snakes, playerId, playerSkinIndex, fxState, dt) {
+    for (const snake of snakes) {
+        const snakeId = snake?.snake;
+        if (snakeId == null) continue;
+
+        if ((snake.died === true || snake.alive !== true) && Array.isArray(snake.body) && snake.body.length >= 2 && snake.dc !== true) {
+            if (!fxState.deathAnims.has(snakeId)) {
+                fxState.deathAnims.set(snakeId, {
+                    elapsedSeconds: 0,
+                    path: snake.body.map((point) => ({ X: point.X, Y: point.Y })),
+                    skin: resolveSnakeSkin(snake, playerId, playerSkinIndex),
+                    isFinished: false
+                });
+            }
+        }
+        else if (snake.alive === true && fxState.deathAnims.has(snakeId)) {
+            fxState.deathAnims.delete(snakeId);
+        }
+    }
+
+    for (const [snakeId, anim] of Array.from(fxState.deathAnims.entries())) {
+        if (anim.isFinished || !Array.isArray(anim.path) || anim.path.length < 2) {
+            fxState.deathAnims.delete(snakeId);
+            continue;
         }
 
-        carry = len - (walked - spacing);
-        if (carry >= spacing) carry = 0;
+        const lengths = [];
+        let totalLength = 0;
+        for (let i = 0; i < anim.path.length - 1; i++) {
+            const dx = anim.path[i + 1].X - anim.path[i].X;
+            const dy = anim.path[i + 1].Y - anim.path[i].Y;
+            const segmentLength = Math.hypot(dx, dy);
+            lengths.push(segmentLength);
+            totalLength += segmentLength;
+        }
+
+        const explosionSpeed = BIT_DISTANCE / EXPLOSION_DELAY;
+        const explodedLength = anim.elapsedSeconds * explosionSpeed;
+        let currentDistance = 0;
+        const remainingPoints = [];
+
+        for (let i = 0; i < anim.path.length - 1; i++) {
+            const segmentLength = lengths[i];
+            const segmentDistanceEnd = totalLength - currentDistance;
+            if (segmentDistanceEnd > explodedLength) {
+                if (remainingPoints.length === 0) {
+                    remainingPoints.push(anim.path[i]);
+                }
+
+                if (segmentDistanceEnd - segmentLength > explodedLength) {
+                    remainingPoints.push(anim.path[i + 1]);
+                }
+                else {
+                    const t = segmentLength > 0.001 ? (segmentDistanceEnd - explodedLength) / segmentLength : 0;
+                    remainingPoints.push({
+                        X: anim.path[i].X + (anim.path[i + 1].X - anim.path[i].X) * t,
+                        Y: anim.path[i].Y + (anim.path[i + 1].Y - anim.path[i].Y) * t
+                    });
+                    break;
+                }
+            }
+            currentDistance += segmentLength;
+        }
+
+        if (remainingPoints.length >= 2) {
+            drawSnakeBody(ctx, remainingPoints, anim.skin);
+        }
+
+        currentDistance = 0;
+        let headParticleDone = false;
+        for (let i = anim.path.length - 1; i > 0; i--) {
+            const segmentLength = lengths[i - 1];
+            const steps = Math.max(1, Math.ceil(segmentLength / BIT_DISTANCE));
+            for (let step = 0; step <= steps; step++) {
+                const t = step / steps;
+                const pointDistance = currentDistance + segmentLength * t;
+                const timeSinceExplosion = anim.elapsedSeconds - pointDistance / explosionSpeed;
+                if (timeSinceExplosion < 0 || timeSinceExplosion > PARTICLE_LIFESPAN) continue;
+
+                const bx = anim.path[i].X + (anim.path[i - 1].X - anim.path[i].X) * t;
+                const by = anim.path[i].Y + (anim.path[i - 1].Y - anim.path[i].Y) * t;
+                const alpha = Math.max(0, 1 - timeSinceExplosion / PARTICLE_LIFESPAN);
+                const isHead = !headParticleDone && pointDistance < 1;
+                if (isHead) headParticleDone = true;
+
+                const baseRadius = isHead ? 10 : 3;
+                const expandFactor = isHead ? 25 : 12;
+                const radius = baseRadius + (timeSinceExplosion / PARTICLE_LIFESPAN) * expandFactor;
+
+                ctx.save();
+                ctx.globalAlpha = alpha;
+                ctx.fillStyle = anim.skin.deathColor;
+                ctx.beginPath();
+                ctx.arc(bx, by, radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+            currentDistance += segmentLength;
+        }
+
+        anim.elapsedSeconds += dt;
+        if (anim.elapsedSeconds > totalLength / explosionSpeed + 1) {
+            anim.isFinished = true;
+            fxState.deathAnims.delete(snakeId);
+        }
     }
+}
+
+/** Computes the cached high-quality wall layout. */
+function getWallCache(walls, fxState) {
+    const wallKey = walls
+        .filter((wall) => wall?.p1 && wall?.p2)
+        .map((wall) => `${wall.wall}:${wall.p1.X},${wall.p1.Y}:${wall.p2.X},${wall.p2.Y}`)
+        .join('|');
+
+    if (fxState.wallCache && fxState.wallCacheKey === wallKey) {
+        return fxState.wallCache;
+    }
+
+    const occupiedSet = new Set();
+    const occupiedCells = [];
+    for (const wall of walls) {
+        const rect = wallRect(wall);
+        if (!rect) continue;
+        const cols = Math.round(rect.w / 25);
+        const rows = Math.round(rect.h / 25);
+        const startCx = Math.round(rect.x / 25);
+        const startCy = Math.round(rect.y / 25);
+        for (let row = 0; row < rows; row++) {
+            for (let col = 0; col < cols; col++) {
+                const cx = startCx + col;
+                const cy = startCy + row;
+                const key = `${cx},${cy}`;
+                if (!occupiedSet.has(key)) {
+                    occupiedSet.add(key);
+                    occupiedCells.push({ cx, cy });
+                }
+            }
+        }
+    }
+
+    const bricks = new Map();
+    for (const cell of occupiedCells) {
+        const brick = brickId(cell.cx, cell.cy);
+        const key = `${brick.col},${brick.row}`;
+        if (bricks.has(key)) {
+            const existing = bricks.get(key);
+            existing.minCx = Math.min(existing.minCx, cell.cx);
+            existing.maxCx = Math.max(existing.maxCx, cell.cx);
+        }
+        else {
+            bricks.set(key, { bidCol: brick.col, bidRow: brick.row, minCx: cell.cx, maxCx: cell.cx, cy: cell.cy });
+        }
+    }
+
+    fxState.wallCacheKey = wallKey;
+    fxState.wallCache = {
+        occupiedSet,
+        occupiedCells,
+        bricks: Array.from(bricks.values())
+    };
+    return fxState.wallCache;
+}
+
+/** Computes the pop-in scale for a powerup. */
+function computePowerupPopScale(ageSeconds) {
+    if (ageSeconds <= 0) return 0.1;
+    if (ageSeconds >= POWERUP_POP_DURATION_SECONDS) return 1;
+
+    const t = ageSeconds / POWERUP_POP_DURATION_SECONDS;
+    const easeOut = 1 - Math.pow(1 - t, 4);
+    const bounce = Math.sin(t * Math.PI * 1.25) * POWERUP_POP_BOUNCE_AMPLITUDE * (1 - t * 0.6);
+    return Math.max(0.1, easeOut + bounce);
+}
+
+/** Converts a wall cell into a brick-group identifier. */
+function brickId(cx, cy) {
+    return {
+        col: mod(cy, 2) === 0 ? Math.floor(cx / 2) : Math.floor((cx - 1) / 2),
+        row: cy
+    };
+}
+
+/** Hash used to vary wall brick colors deterministically. */
+function brickHash(a, b) {
+    let h = a * 374761393 + b * 668265263;
+    h = (h ^ (h >> 13)) * 1274126177;
+    return (h ^ (h >> 16)) & 0x7fffffff;
+}
+
+/** Mathematical modulo that behaves for negative coordinates. */
+function mod(a, b) {
+    return ((a % b) + b) % b;
 }
 
 /** Draws a floating name and score pill above the head. */

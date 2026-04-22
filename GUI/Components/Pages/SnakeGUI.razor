@@ -57,31 +57,17 @@ else
     <h2 class="sidebar-title">@(_splitScreen ? "PLAYER 1" : "SNAKE")</h2>
 
     <div class="field-group">
-        <label>Open Games</label>
-        <div class="games-list" id="gamesList" tabindex="0">
-            @if (_openGames.Count == 0)
-            {
-                <div class="game-item empty">No open games found. Create one to start.</div>
-            }
-            else
-            {
-                @foreach (var game in _openGames)
-                {
-                    <button type="button"
-                            class="game-item @(game.GameId == _selectedGameId ? "selected" : "")"
-                            @onclick="(() => SelectGame(game.GameId))">
-                        <span class="game-id">Game #@game.GameId</span>
-                        <span class="game-host">@game.Host:@game.Port</span>
-                        <span class="game-start">@game.StartTime.ToLocalTime().ToString("g")</span>
-                    </button>
-                }
-            }
-        </div>
-        @if (!string.IsNullOrWhiteSpace(_dbStatusMessage))
-        {
-            <div class="db-status">@_dbStatusMessage</div>
-        }
+        <label>Host</label>
+        <input @bind="Host" />
     </div>
+    <div class="field-group">
+        <label>Port</label>
+        <input type="number" @bind="Port" />
+    </div>
+    @if (!string.IsNullOrWhiteSpace(_dbStatusMessage))
+    {
+        <div class="db-status">@_dbStatusMessage</div>
+    }
     <div class="field-group">
         <label>@(_splitScreen ? "P1 Name" : "Name")</label>
         <input id="p1NameInput" class="@(_p1MenuIndex == 0 ? "menu-focused" : "")" @bind="PlayerName" disabled="@(_p1Playing)" />
@@ -101,7 +87,7 @@ else
         </div>
     </div>
 
-    <button class="btn-snake btn-full @(_p1MenuIndex == 2 ? "menu-focused" : "")" @onclick="(() => ConnectSelectedGame())">@(_splitScreen ? "Connect P1" : "Connect Selected")</button>
+    <button class="btn-snake btn-full @(_p1MenuIndex == 2 ? "menu-focused" : "")" @onclick="(() => Connect())">@(_splitScreen ? "Connect P1" : "Connect")</button>
     <button class="btn-snake btn-full btn-secondary" @onclick="(() => CreateAndConnectGame())">Create Game</button>
     <button class="btn-snake btn-full btn-secondary" @onclick="RefreshOpenGamesAsync">Refresh Games</button>
 
@@ -331,6 +317,12 @@ else
 
     /// <summary>Default game-server port advertised when creating a new game.</summary>
     private readonly int _defaultGamePort = int.TryParse(Environment.GetEnvironmentVariable("GAME_SERVER_PORT"), out int envPort) ? envPort : 11000;
+
+    /// <summary>Direct-connect host used by the sidebar connect action.</summary>
+    private string Host { get; set; } = Environment.GetEnvironmentVariable("GAME_SERVER_HOST") ?? "localhost";
+
+    /// <summary>Direct-connect port used by the sidebar connect action.</summary>
+    private int Port { get; set; } = int.TryParse(Environment.GetEnvironmentVariable("GAME_SERVER_PORT"), out int configuredPort) ? configuredPort : 11000;
 
     /// <summary>Open game sessions discovered from the score database.</summary>
     private readonly List<LiveGameSession> _openGames = [];
@@ -990,13 +982,13 @@ else
     /// <summary>Disconnects any existing P1 session and connects with current settings.</summary>
     private async Task Connect()
     {
-        await ConnectSelectedGame();
+        await ConnectToEndpoint(Host, Port, PlayerName, _p1SkinIndex, isP1: true);
     }
 
     /// <summary>Disconnects any existing P2 session and connects with current settings.</summary>
     private async Task ConnectP2()
     {
-        await ConnectP2SelectedGame();
+        await ConnectToEndpoint(Host, Port, Player2Name, _p2SkinIndex, isP1: false);
     }
 
     /// <summary>Sends a respawn command for P1 and dismisses the death overlay.</summary>
