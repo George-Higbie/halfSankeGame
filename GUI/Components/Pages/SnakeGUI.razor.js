@@ -48,31 +48,6 @@ let renderLoopHandle = 0;
 /** @type {number} Timestamp of the last browser-rendered frame. */
 let lastFrameAt = 0;
 
-// ==================== DIAGNOSTIC INSTRUMENTATION ====================
-/** @type {boolean} Enable on-screen debug overlay. */
-let debugOverlayEnabled = true;
-
-/** @type {number} Current interpolation alpha for the local player (0.0 - 1.0). */
-let currentInterpolationAlpha = 0;
-
-/** @type {boolean} Whether a turn transition was detected on the local player in the current frame. */
-let currentFrameTurnTransition = false;
-
-/** @type {Array<number>} Ringbuffer of last 10 alpha values for display. */
-const alphaHistory = [];
-
-/** @type {number} Count of snapshots received. */
-let snapshotCount = 0;
-
-/** @type {number} Timestamp of the first snapshot (for frequency calculation). */
-let firstSnapshotTime = 0;
-
-/** @type {Array<number>} Last 10 snapshot deltas in ms for moving average. */
-const snapshotDeltaHistory = [];
-
-/** @type {number} Time of the last snapshot arrival (for computing deltas). */
-let lastSnapshotTime = 0;
-
 /** Persistent camera state for each viewport. */
 const cameraStates = {
     p1: { x: 0, y: 0, initialized: false },
@@ -260,21 +235,6 @@ window.setSnakeSkinCatalog = (skins) => {
  */
 window.setSnakeRenderState = (state) => {
     const receivedAt = performance.now();
-    
-    // Track snapshot frequency for diagnostics.
-    snapshotCount++;
-    if (firstSnapshotTime === 0) {
-        firstSnapshotTime = receivedAt;
-    }
-    if (lastSnapshotTime > 0) {
-        const delta = receivedAt - lastSnapshotTime;
-        snapshotDeltaHistory.push(delta);
-        if (snapshotDeltaHistory.length > 10) {
-            snapshotDeltaHistory.shift();
-        }
-    }
-    lastSnapshotTime = receivedAt;
-    
     if (latestRenderState) {
         previousRenderState = latestRenderState;
         const snapshotDelta = receivedAt - latestRenderStateReceivedAt;
@@ -314,13 +274,6 @@ window.initRenderJS = (dotnetRef) => {
     ensureCanvas();
     resizeCanvas();
     window.addEventListener('resize', resizeCanvas);
-
-    // Debug overlay toggle: press 'D' to show/hide diagnostics.
-    window.addEventListener('keydown', (e) => {
-        if (e.key.toLowerCase() === 'd') {
-            debugOverlayEnabled = !debugOverlayEnabled;
-        }
-    });
 
     if (!renderLoopHandle) {
         lastFrameAt = performance.now();
@@ -407,14 +360,6 @@ function buildInterpolatedRenderState(now) {
     }
 
     const alpha = clamp((now - latestRenderStateReceivedAt) / interpolationWindowMs, 0, MAX_EXTRAPOLATION_ALPHA);
-    
-    // Record alpha for diagnostics.
-    currentInterpolationAlpha = alpha;
-    alphaHistory.push(alpha);
-    if (alphaHistory.length > 10) {
-        alphaHistory.shift();
-    }
-    
     return {
         ...latestRenderState,
         p1: interpolateViewport(previousRenderState.p1, latestRenderState.p1, alpha),
@@ -528,10 +473,7 @@ function interpolateSnakeHeadFallback(previousSnake, currentSnake, alpha) {
  * - Otherwise interpolate only the head (not full body topology).
  */
 function interpolateLocalPlayerSnake(previousSnake, currentSnake, alpha) {
-    currentFrameTurnTransition = false;
-    
     if (isDirectionTurnTransition(previousSnake?.dir, currentSnake?.dir)) {
-        currentFrameTurnTransition = true;
         return currentSnake;
     }
 
@@ -631,47 +573,6 @@ function interpolatePowerups(previousPowerups, currentPowerups, alpha) {
             loc: interpolatePoint(previousPowerup.loc, powerup.loc, alpha)
         };
     });
-}
-
-/**
- * Draws diagnostic debug information overlay (FPS, alpha, turn flags, snapshot frequency).
- * @param {CanvasRenderingContext2D} ctx - Canvas rendering context.
- * @param {number} width - Canvas width.
- * @param {number} height - Canvas height.
- */
-function drawDebugOverlay(ctx, width, height) {
-    if (!debugOverlayEnabled) return;
-
-    ctx.save();
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-    ctx.fillRect(10, 10, 320, 180);
-
-    ctx.fillStyle = '#00ff00';
-    ctx.font = "11px 'Courier New', monospace";
-    ctx.textAlign = 'left';
-
-    const avgSnapshotDelta = snapshotDeltaHistory.length > 0
-        ? snapshotDeltaHistory.reduce((a, b) => a + b, 0) / snapshotDeltaHistory.length
-        : 0;
-
-    const lines = [
-        `[DIAGNOSTICS]`,
-        `Alpha: ${currentInterpolationAlpha.toFixed(3)} (${(currentInterpolationAlpha * 100).toFixed(1)}%)`,
-        `Turn?: ${currentFrameTurnTransition ? 'YES' : 'NO'}`,
-        `Snapshot Δ: ${avgSnapshotDelta.toFixed(1)}ms (${snapshotDeltaHistory.length} samples)`,
-        `InterpolWindow: ${interpolationWindowMs.toFixed(1)}ms`,
-        `Snapshots: ${snapshotCount} total`,
-        `Alpha History: [${alphaHistory.map(a => a.toFixed(2)).join(', ')}]`,
-        `Debug: Press 'D' to toggle overlay`,
-    ];
-
-    let y = 25;
-    for (const line of lines) {
-        ctx.fillText(line, 20, y);
-        y += 15;
-    }
-
-    ctx.restore();
 }
 
 /**
@@ -776,9 +677,6 @@ function drawGame(ctx, state, dt, timeSeconds) {
     else {
         window.updateScoreboardDither(-1, -1, false);
     }
-
-    // Draw diagnostic overlay if enabled.
-    drawDebugOverlay(ctx, width, height);
 }
 
 /**
