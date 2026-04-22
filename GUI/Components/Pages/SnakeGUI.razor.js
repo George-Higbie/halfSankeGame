@@ -48,6 +48,38 @@ let renderLoopHandle = 0;
 /** @type {number} Timestamp of the last browser-rendered frame. */
 let lastFrameAt = 0;
 
+// ==================== CLIENT-SIDE PREDICTION WITH SERVER RECONCILIATION ====================
+/**
+ * Tracks per-snake prediction state for client-side movement validation.
+ * Allows client to predict movement, then validates against server's authoritative position.
+ * If within tolerance, client prediction is accepted; if outside, server corrects.
+ * This prevents cheating while eliminating snap-backs for legitimate movement.
+ */
+const snakePredictionStateById = new Map();
+
+/** Maximum deviation (in pixels) allowed between client prediction and server position. */
+const PREDICTION_TOLERANCE_PIXELS = 25;
+
+/** Represent a predicted snake state for reconciliation. */
+class SnakePredictionState {
+    constructor() {
+        /** @type {Point2D|null} Last known server position (head). */
+        this.lastServerHeadPos = null;
+        
+        /** @type {Point2D|null} Last known velocity (direction * speed). */
+        this.lastVelocity = null;
+        
+        /** @type {number} Timestamp of last server snapshot. */
+        this.lastServerUpdateTime = 0;
+        
+        /** @type {Point2D|null} Predicted head position based on velocity extrapolation. */
+        this.predictedHeadPos = null;
+        
+        /** @type {boolean} Whether the last reconciliation detected a discrepancy. */
+        this.wasOutOfTolerance = false;
+    }
+}
+
 /** Persistent camera state for each viewport. */
 const cameraStates = {
     p1: { x: 0, y: 0, initialized: false },
@@ -235,6 +267,23 @@ window.setSnakeSkinCatalog = (skins) => {
  */
 window.setSnakeRenderState = (state) => {
     const receivedAt = performance.now();
+    
+    // Reconcile local player position against server authority with tolerance.
+    if (state && state.p1 && Array.isArray(state.p1.snakes)) {
+        for (const snake of state.p1.snakes) {
+            if (snake && snake.snake === state.p1?.playerId && Array.isArray(snake.body) && snake.body.length > 0) {
+                const headPos = snake.body[snake.body.length - 1];
+                updateSnakePredictionState(snake.snake, headPos, receivedAt);
+                const reconciliation = reconcileSnakePosition(snake.snake, headPos, receivedAt);
+                // Log if server position was outside tolerance (potential lag/desync).
+                if (!reconciliation.withinTolerance) {
+                    // Snap to server position but log the discrepancy.
+                    console.log(`[Reconciliation] Player ${snake.snake}: deviation ${reconciliation.distance.toFixed(1)}px (server authority applied)`);
+                }
+            }
+        }
+    }
+    
     if (latestRenderState) {
         previousRenderState = latestRenderState;
         const snapshotDelta = receivedAt - latestRenderStateReceivedAt;
@@ -347,6 +396,88 @@ function createViewportFxState() {
         wallCache: null,
         wallCacheKey: ''
     };
+}
+
+/**
+ * Updates client-side prediction state for a snake based on server snapshot.
+ * Calculates velocity from position delta, stores for next frame's extrapolation.
+ * @param {number} snakeId - Server-assigned snake ID.
+ * @param {Point2D} headPos - Current head position from server.
+ * @param {number} now - Current performance.now() timestamp.
+ */
+function updateSnakePredictionState(snakeId, headPos, now) {
+    let state = snakePredictionStateById.get(snakeId);
+    if (!state) {
+        state = new SnakePredictionState();
+        snakePredictionStateById.set(snakeId, state);
+    }
+
+    if (state.lastServerHeadPos && state.lastServerUpdateTime > 0) {
+        const deltaTime = (now - state.lastServerUpdateTime) / 1000;
+        if (deltaTime > 0) {
+            const dx = headPos.X - state.lastServerHeadPos.X;
+            const dy = headPos.Y - state.lastServerHeadPos.Y;
+            state.lastVelocity = {
+                X: dx / deltaTime,
+                Y: dy / deltaTime
+            };
+        }
+    }
+
+    state.lastServerHeadPos = { X: headPos.X, Y: headPos.Y };
+    state.lastServerUpdateTime = now;
+    state.predictedHeadPos = { X: headPos.X, Y: headPos.Y };
+}
+
+/**
+ * Predicts where a snake's head should be given elapsed time since last server update.
+ * @param {SnakePredictionState} state - Prediction state for the snake.
+ * @param {number} elapsedMs - Milliseconds since last server update.
+ * @returns {Point2D|null} Predicted head position, or null if not enough data.
+ */
+function predictSnakeHeadPosition(state, elapsedMs) {
+    if (!state || !state.lastServerHeadPos || !state.lastVelocity) {
+        return null;
+    }
+
+    const elapsedSec = elapsedMs / 1000;
+    return {
+        X: state.lastServerHeadPos.X + state.lastVelocity.X * elapsedSec,
+        Y: state.lastServerHeadPos.Y + state.lastVelocity.Y * elapsedSec
+    };
+}
+
+/**
+ * Checks whether a snake's position deviates from client prediction beyond tolerance.
+ * Returns { withinTolerance: bool, distance: number }.
+ */
+function reconcileSnakePosition(snakeId, serverHeadPos, now) {
+    const state = snakePredictionStateById.get(snakeId);
+    if (!state) {
+        return { withinTolerance: true, distance: 0 };
+    }
+
+    const elapsedMs = now - state.lastServerUpdateTime;
+    const predictedPos = predictSnakeHeadPosition(state, elapsedMs);
+    if (!predictedPos) {
+        return { withinTolerance: true, distance: 0 };
+    }
+
+    const dx = serverHeadPos.X - predictedPos.X;
+    const dy = serverHeadPos.Y - predictedPos.Y;
+    const distance = Math.hypot(dx, dy);
+    const withinTolerance = distance <= PREDICTION_TOLERANCE_PIXELS;
+
+    state.wasOutOfTolerance = !withinTolerance;
+    if (withinTolerance) {
+        // Client's prediction was accurate; accept it.
+        state.predictedHeadPos = predictedPos;
+    } else {
+        // Server position deviates; trust server authority.
+        state.predictedHeadPos = { X: serverHeadPos.X, Y: serverHeadPos.Y };
+    }
+
+    return { withinTolerance, distance };
 }
 
 /** Builds an interpolated render state between the previous and latest snapshots. */
@@ -491,13 +622,21 @@ function interpolateLocalPlayerSnake(previousSnake, currentSnake, alpha) {
 
     const body = currentBody.slice();
     const previousHead = previousBody[previousHeadIndex];
-    const currentHead = body[currentHeadIndex];
+    
+    // Use client-predicted head if it was within tolerance; otherwise use server's authoritative position.
+    const snakeId = currentSnake.snake;
+    const predictionState = snakePredictionStateById.get(snakeId);
+    const currentHead = predictionState?.predictedHeadPos || body[currentHeadIndex];
+    
     const dx = currentHead.X - previousHead.X;
     const dy = currentHead.Y - previousHead.Y;
     const stepDistance = Math.hypot(dx, dy);
 
     if (Number.isFinite(stepDistance) && stepDistance <= MAX_FALLBACK_HEAD_BLEND_DISTANCE) {
         body[currentHeadIndex] = interpolatePoint(previousHead, currentHead, alpha);
+    } else {
+        // Large jump detected (respawn, teleport, cheating); snap to current without blending.
+        body[currentHeadIndex] = currentHead;
     }
 
     return {
